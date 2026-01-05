@@ -1,0 +1,24 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# Streamlit
+.streamlit/secrets.toml
+
+# Local config / credentials
+.env
+.config/
+
+# Local data stores
+data/
+*.db
+
+# Logs / cache
+logs/
+.cache/
+
+# OS
+.DS_Store
+Thumbs.db
