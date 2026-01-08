@@ -1,6 +1,6 @@
 # Portuguese (Brazil) UI strings
 
-APP_TITLE = "App Foundation"
+APP_TITLE = "WaterWatch"
 
 # Auth
 LOGIN_TITLE = "Entrar"

@@ -1,4 +1,4 @@
-"""App Foundation — Streamlit entry point (template)."""
+"""WaterWatch — main Streamlit app entry point."""
 
 import streamlit as st
 
@@ -15,22 +15,25 @@ from core.auth.session import (
     get_current_role,
 )
 from core.auth.login_ui import render_login
+from core.ui.explorer_map import render_explorer_map  # ui está dentro de core
 
+# Carrega strings (APP_TITLE já deve estar como "WaterWatch" nos arquivos de strings)
 S = get_strings()
+
 st.set_page_config(page_title=f"{S.APP_TITLE} — {APP_VERSION}", layout="wide")
 
-# Ensure admin exists
+# Garante admin padrão
 _ = ensure_default_admin(db_path=DEFAULT_DB_PATH)
 
 init_session_state()
 
-# If logged in, enforce timeout
+# Se logado, verifica timeout
 if is_logged_in() and session_expired():
     S = get_strings()
     st.warning(S.INFO_SESSION_EXPIRED)
     logout()
 
-# Login gate
+# Tela de login
 if not is_logged_in():
     render_login(db_path=DEFAULT_DB_PATH)
     st.stop()
@@ -39,17 +42,32 @@ update_last_activity()
 user = get_current_user()
 role = get_current_role()
 
-S = get_strings()
+S = get_strings()  # recarrega strings se necessário
 
-# Sidebar session box
+# Sidebar sessão
 st.sidebar.title(f"{S.APP_TITLE}\n{APP_VERSION}")
 with st.sidebar.expander("Session", expanded=True):
     st.markdown(f"**User:** `{user}`")
     st.markdown(f"**Role:** `{role}`")
-    if st.button(S.BTN_LOGOUT, use_container_width=True):
+    if st.button(S.BTN_LOGOUT, width="stretch"):
         logout()
         st.rerun()
 
 st.title(f"{S.APP_TITLE} — {APP_VERSION}")
-st.success(f"Authenticated session active: {user} ({role})")
-st.info("Replace this placeholder with your app's Explorer / Admin / Playground routes.")
+
+# Abas principais
+tabs = st.tabs(["Explorer & Map", "Plot Time Series", "Admin Panel"])
+
+with tabs[0]:
+    render_explorer_map(role=role)
+
+with tabs[1]:
+    st.info(
+        "Time series plotting will be implemented here. "
+        "This tab will use the selected stations from 'Explorer & Map' "
+        "to fetch and display 1, 2, 3, 5, and 7-day windows."
+    )
+
+with tabs[2]:
+    st.info("Admin panel not implemented yet.")
+

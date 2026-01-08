@@ -1,2 +1,4 @@
 streamlit
 argon2-cffi
+pydeck
+pandas
