@@ -19,9 +19,8 @@ from core.auth.session import (
     update_last_activity,
 )
 from core.ui.strings.loader import (
-    get_lang,
-    set_lang,
     get_strings,
+    set_lang,
     SUPPORTED,
 )
 
@@ -37,11 +36,17 @@ def render_login(db_path: str = DEFAULT_DB_PATH) -> None:
     # -------------------------
     # Language handling
     # -------------------------
-    if "ui_lang" not in st.session_state:
-        st.session_state["ui_lang"] = get_lang()
+    # Aqui usamos SEMPRE st.session_state["locale"] como fonte de verdade,
+    # em alinhamento com o app.py (que já leu .config/lang.txt).
+    if "locale" not in st.session_state:
+        st.session_state["locale"] = "en"
 
     lang_codes = list(SUPPORTED.keys())
-    current_idx = lang_codes.index(st.session_state["ui_lang"])
+    current_lang = st.session_state["locale"]
+    if current_lang not in lang_codes:
+        current_lang = "en"
+
+    current_idx = lang_codes.index(current_lang)
 
     # -------------------------
     # Global page gutters
@@ -57,8 +62,10 @@ def render_login(db_path: str = DEFAULT_DB_PATH) -> None:
             format_func=lambda c: SUPPORTED[c][0],
             key="login_language_select",
         )
-        if selected_lang != st.session_state["ui_lang"]:
-            st.session_state["ui_lang"] = selected_lang
+        if selected_lang != current_lang:
+            # Atualiza a mesma chave usada pelo app principal
+            st.session_state["locale"] = selected_lang
+            # E deixa o loader sincronizar com .config/lang.txt
             set_lang(selected_lang)
             st.rerun()
 
@@ -67,6 +74,17 @@ def render_login(db_path: str = DEFAULT_DB_PATH) -> None:
     with center:
         # Load strings AFTER language is resolved
         S = get_strings()
+
+        # -------------------------
+        # Banner (Water AInalytics US)
+        # -------------------------
+        # Caminho relativo a partir da raiz onde o app é executado (app.py)
+        banner_path = "assets/brand/login_banner.png"
+        try:
+            st.image(banner_path, width="stretch")
+        except Exception:
+            # Se o arquivo não existir ou der erro, simplesmente não quebra o login.
+            pass
 
         # -------------------------
         # Titles

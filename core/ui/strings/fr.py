@@ -1,6 +1,6 @@
 # French UI strings
 
-APP_TITLE = "WaterWatch"
+APP_TITLE = "Water AInalytics US"
 
 # Auth
 LOGIN_TITLE = "Se connecter"

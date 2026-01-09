@@ -1,0 +1,23 @@
+{
+  "brand_name": "Water AInalytics US",
+  "colors": {
+    "navy_900": "#14192B",
+    "navy_850": "#151729",
+    "blue_primary": "#277CDC",
+    "blue_secondary": "#327AD4",
+    "green_primary": "#73BF5C",
+    "green_secondary": "#718A75",
+    "text_on_dark": "#E8EEF8",
+    "text_on_light": "#1F2A44",
+    "muted_text": "#6B7280",
+    "background_light": "#FFFFFF"
+  },
+  "usage": {
+    "primary_gradient": [
+      "#277CDC",
+      "#73BF5C"
+    ],
+    "dark_background": "#14192B",
+    "light_background": "#FFFFFF"
+  }
+}

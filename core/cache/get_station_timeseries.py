@@ -1,9 +1,10 @@
 import os
 import csv
 import random
-import requests
+from datetime import datetime, timedelta
 from typing import Dict, Any, List, Optional, Tuple
 
+import requests
 import pandas as pd  # para salvar em Parquet
 
 IV_ENDPOINT = "https://waterservices.usgs.gov/nwis/iv/"
@@ -70,6 +71,7 @@ def _request_json(
 def _parse_iv_json(js: Dict[str, Any]) -> Dict[str, List[Tuple[str, Optional[float]]]]:
     """
     Returns {parameter_code: [(datetime_iso, value_float_or_None), ...]}
+    (LEGACY: sem unidade. Mantido para compatibilidade.)
     """
     out: Dict[str, List[Tuple[str, Optional[float]]]] = {}
 
@@ -107,6 +109,51 @@ def _parse_iv_json(js: Dict[str, Any]) -> Dict[str, List[Tuple[str, Optional[flo
     return out
 
 
+def _parse_iv_json_with_unit(js: Dict[str, Any]) -> Dict[str, Dict[str, Any]]:
+    """
+    Versão estendida: retorna {pcode: {"unit": unit_str_or_None, "points": [(datetime_iso, value), ...]}}
+    Usada pelo novo fluxo de cache em Parquet com unidade.
+    """
+    out: Dict[str, Dict[str, Any]] = {}
+
+    for ts in (js.get("value", {}) or {}).get("timeSeries", []) or []:
+        var = ts.get("variable", {}) or {}
+        vcode_list = var.get("variableCode", []) or []
+        pcode = None
+        if vcode_list and isinstance(vcode_list, list):
+            pcode = vcode_list[0].get("value")
+
+        if not pcode:
+            continue
+
+        unit = None
+        unit_info = var.get("unit") or {}
+        if isinstance(unit_info, dict):
+            unit = (unit_info.get("unitCode") or "").strip() or None
+
+        values_blocks = ts.get("values", []) or []
+        pts: List[Tuple[str, Optional[float]]] = []
+        if values_blocks:
+            for block in values_blocks:
+                for v in block.get("value", []) or []:
+                    dt = v.get("dateTime")
+                    sval = v.get("value")
+                    if not dt:
+                        continue
+                    try:
+                        fval = float(sval) if sval is not None and sval != "" else None
+                    except Exception:
+                        fval = None
+                    pts.append((dt, fval))
+
+        out[pcode] = {
+            "unit": unit,
+            "points": pts,
+        }
+
+    return out
+
+
 def fetch_iv_timeseries(
     site: str,
     *,
@@ -123,6 +170,8 @@ def fetch_iv_timeseries(
     Rules (per USGS docs):
     - Do not mix period with startDT/endDT.
     - If endDT is provided, startDT must also be provided.
+
+    LEGACY: retorna dict pcode -> lista de (datetime_iso, valor).
     """
     if parameter_codes is None:
         parameter_codes = HYDRO_PARAMETERS  # mantém comportamento anterior
@@ -177,6 +226,8 @@ def cache_iv_daily_parquet(
         {out_root}/{site}/{parameter}/{YYYY-MM-DD}.parquet
 
     Retorna o mesmo dict que fetch_iv_timeseries: {pcode: [(datetime_iso, value), ...]}.
+
+    OBS: fluxo LEGACY, sem unidade. Mantido para compatibilidade.
     """
     if parameter_codes is None:
         parameter_codes = ALL_PARAMETERS
@@ -192,12 +243,11 @@ def cache_iv_daily_parquet(
         timeout=timeout,
     )
 
-    # Grava Parquets diários
+    # Grava Parquets diários (LEGACY: sem coluna unit, datetime como string)
     for pcode, pts in data.items():
         if not pts:
             continue
         df = pd.DataFrame(pts, columns=["datetime", "value"])
-        # Usa a parte YYYY-MM-DD do datetime ISO
         df["date"] = df["datetime"].str.slice(0, 10)
 
         for day, df_day in df.groupby("date"):
@@ -217,6 +267,164 @@ def _summarize_series(points: List[Tuple[str, Optional[float]]]) -> str:
     first_dt, first_val = points_sorted[0]
     last_dt, last_val = points_sorted[-1]
     return f"n={len(points_sorted)} first={first_dt} last={last_dt} last_value={last_val}"
+
+
+# -------------------------------------------------------------------
+# NOVO FLUXO: ensure_iv_window – cache diário em Parquet com unidade e UTC
+# -------------------------------------------------------------------
+
+def ensure_iv_window(
+    site: str,
+    parameter_code: str,
+    *,
+    days: int = 7,
+    out_root: str = "iv_cache",
+    api_key: Optional[str] = None,
+    timeout: int = 60,
+) -> pd.DataFrame:
+    """
+    Garante que, para um site + parâmetro + janela (em dias, terminando em hoje UTC),
+    existam Parquets diários em:
+
+        {out_root}/{site}/{parameter_code}/{YYYY-MM-DD}.parquet
+
+    Schema sugerido dos Parquets "novos":
+        - site_no         (str)
+        - parameter_code  (str)
+        - unit            (str ou None)
+        - datetime_utc    (datetime64[ns, UTC])
+        - value           (float, com NaN)
+        - date_utc        (str, YYYY-MM-DD)
+
+    O fluxo:
+    1. Verifica quais dias da janela já têm arquivo Parquet.
+    2. Para dias faltantes, faz uma requisição IV (startDT/endDT) e grava apenas o que não existe.
+    3. Lê todos os Parquets da janela e retorna um DataFrame concatenado (pode estar vazio).
+
+    Compatível com Parquets "legados" (sem 'unit' etc.): se o arquivo existir mas sem coluna 'unit',
+    será lido assim mesmo; as colunas ausentes aparecerão como NaN.
+    """
+    if days <= 0:
+        raise ValueError("days must be a positive integer")
+
+    # Hoje (UTC) como referência
+    today_utc = datetime.utcnow().date()
+    window_dates = [today_utc - timedelta(days=i) for i in range(days)]
+
+    # Caminhos esperados
+    base_dir = os.path.join(out_root, site, parameter_code)
+    expected_paths = {
+        d: os.path.join(base_dir, f"{d.isoformat()}.parquet") for d in window_dates
+    }
+
+    # Quais dias já têm arquivo?
+    existing_dates = [d for d, p in expected_paths.items() if os.path.exists(p)]
+    missing_dates = [d for d in window_dates if d not in existing_dates]
+
+    # Se houver dias faltantes, faz uma chamada IV para cobrir a janela mínima
+    if missing_dates:
+        earliest = min(missing_dates)
+        latest = max(missing_dates)
+
+        # Intervalo [earliest, latest+1 dia) em UTC
+        startDT = f"{earliest.isoformat()}T00:00:00Z"
+        endDT = f"{(latest + timedelta(days=1)).isoformat()}T00:00:00Z"
+
+        params: Dict[str, str] = {
+            "format": "json",
+            "sites": site,
+            "parameterCd": parameter_code,
+            "startDT": startDT,
+            "endDT": endDT,
+        }
+        if api_key:
+            params["api_key"] = api_key
+
+        headers: Dict[str, str] = {
+            "User-Agent": "WaterWatch/0.1 (contact: you@example.com)",
+            "Accept": "application/json",
+        }
+
+        with requests.Session() as session:
+            js = _request_json(session, IV_ENDPOINT, params=params, headers=headers, timeout=timeout)
+
+        parsed = _parse_iv_json_with_unit(js)
+        meta = parsed.get(parameter_code, {"unit": None, "points": []})
+        unit = meta.get("unit")
+        points = meta.get("points") or []
+
+        if points:
+            df_all = pd.DataFrame(points, columns=["datetime_iso", "value"])
+            # Converte explicitamente para datetime UTC
+            df_all["datetime_utc"] = pd.to_datetime(df_all["datetime_iso"], utc=True, errors="coerce")
+            df_all = df_all.dropna(subset=["datetime_utc"])
+            df_all["date_utc"] = df_all["datetime_utc"].dt.date.astype(str)
+
+            # Colunas fixas
+            df_all["site_no"] = site
+            df_all["parameter_code"] = parameter_code
+            df_all["unit"] = unit
+
+            os.makedirs(base_dir, exist_ok=True)
+
+            # Para cada dia faltante, grava se houver pontos
+            for d in missing_dates:
+                day_str = d.isoformat()
+                df_day = df_all[df_all["date_utc"] == day_str]
+                if df_day.empty:
+                    continue
+                out_path = expected_paths[d]
+                df_day[
+                    ["site_no", "parameter_code", "unit", "datetime_utc", "value", "date_utc"]
+                ].to_parquet(out_path, index=False)
+
+    # Agora lê todos os Parquets da janela (inclusive os "legados")
+    frames: List[pd.DataFrame] = []
+    for d, path in expected_paths.items():
+        if not os.path.exists(path):
+            # Sem dados para esse dia; ok, pode haver buracos
+            continue
+        try:
+            df_day = pd.read_parquet(path)
+        except Exception:
+            # Se o arquivo estiver corrompido ou incompatível, ignora (ou poderia logar)
+            continue
+
+        # Harmoniza algumas colunas esperadas; se não existirem, cria
+        if "site_no" not in df_day.columns:
+            df_day["site_no"] = site
+        if "parameter_code" not in df_day.columns:
+            df_day["parameter_code"] = parameter_code
+        if "unit" not in df_day.columns:
+            df_day["unit"] = None
+
+        # datetime_utc pode estar como string ou datetime sem timezone; tentar converte
+        if "datetime_utc" in df_day.columns:
+            df_day["datetime_utc"] = pd.to_datetime(
+                df_day["datetime_utc"], utc=True, errors="coerce"
+            )
+        elif "datetime" in df_day.columns:
+            df_day["datetime_utc"] = pd.to_datetime(
+                df_day["datetime"], utc=True, errors="coerce"
+            )
+        else:
+            # sem datetime, esse arquivo não serve para séries; ignora
+            continue
+
+        if "date_utc" not in df_day.columns:
+            df_day["date_utc"] = df_day["datetime_utc"].dt.date.astype(str)
+
+        frames.append(df_day)
+
+    if not frames:
+        return pd.DataFrame(
+            columns=["site_no", "parameter_code", "unit", "datetime_utc", "value", "date_utc"]
+        )
+
+    df_out = pd.concat(frames, ignore_index=True)
+    # Ordena por tempo
+    df_out = df_out.sort_values("datetime_utc").reset_index(drop=True)
+    return df_out
 
 
 if __name__ == "__main__":
@@ -245,7 +453,7 @@ if __name__ == "__main__":
         print(f"Site: {site}")
 
         try:
-            # Baixa todos os parâmetros (hydro + qualidade) e grava Parquets diários
+            # Baixa todos os parâmetros (hydro + qualidade) e grava Parquets diários (LEGACY)
             data = cache_iv_daily_parquet(
                 site,
                 parameter_codes=ALL_PARAMETERS,
@@ -267,3 +475,17 @@ if __name__ == "__main__":
         else:
             for pcode, pts in data.items():
                 print(f"{pcode}: {_summarize_series(pts)}")
+
+        # Além disso, testa ensure_iv_window para um parâmetro, usando a mesma janela:
+        try:
+            df_test = ensure_iv_window(
+                site,
+                PCODE_STAGE,
+                days=days,
+                out_root=out_root,
+                api_key=api_key,
+                timeout=60,
+            )
+            print(f"ensure_iv_window: site={site} pcode={PCODE_STAGE} rows={len(df_test)}")
+        except Exception as e:
+            print(f"ensure_iv_window error for site={site}: {e}")

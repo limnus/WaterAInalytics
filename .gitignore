@@ -14,6 +14,10 @@ venv/
 # Local data stores
 data/
 *.db
+data/*.db
+data/*.csv
+data/*.parquet
+!data/README.md
 
 # Logs / cache
 logs/
@@ -22,3 +26,6 @@ logs/
 # OS
 .DS_Store
 Thumbs.db
+
+# USGS IV cache
+iv_cache/
