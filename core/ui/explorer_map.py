@@ -208,24 +208,11 @@ def _selection_ui(df_all: pd.DataFrame, df_filtered: pd.DataFrame) -> None:
     _init_selection_state()
     selected_ids = st.session_state["explorer_selected_ids"]
 
-    st.subheader("Selected stations")
-
-    # Mostra tabela com as estações selecionadas
-    if selected_ids:
-        df_sel = df_all[df_all["monitoring_location_id"].isin(selected_ids)]
-        st.dataframe(
-            df_sel[
-                ["monitoring_location_id", "site_no", "state_name", "hydrologic_unit_code"]
-            ].sort_values("monitoring_location_id"),
-            width="stretch",
-            hide_index=True,
-        )
-    else:
-        st.caption("No stations selected yet.")
-
+    # ---------------------------------
+    # Add station (from current filters) — show first
+    # ---------------------------------
     c1, c2, c3 = st.columns([2, 1, 1])
 
-    # Adicionar nova estação (a partir do conjunto filtrado)
     with c1:
         df_candidates = df_filtered[
             ~df_filtered["monitoring_location_id"].isin(selected_ids)
@@ -261,6 +248,21 @@ def _selection_ui(df_all: pd.DataFrame, df_filtered: pd.DataFrame) -> None:
             st.session_state["explorer_selected_ids"] = []
             st.rerun()
 
+    st.subheader("Selected stations")
+
+    # Mostra tabela com as estações selecionadas
+    if selected_ids:
+        df_sel = df_all[df_all["monitoring_location_id"].isin(selected_ids)]
+        st.dataframe(
+            df_sel[
+                ["monitoring_location_id", "site_no", "state_name", "hydrologic_unit_code"]
+            ].sort_values("monitoring_location_id"),
+            width="stretch",
+            hide_index=True,
+        )
+    else:
+        st.caption("No stations selected yet.")
+
     # Remoção individual opcional
     if selected_ids:
         with st.expander("Remove a single station", expanded=False):
@@ -272,22 +274,20 @@ def _selection_ui(df_all: pd.DataFrame, df_filtered: pd.DataFrame) -> None:
                 + " — HUC "
                 + df_sel["hydrologic_unit_code"].astype(str)
             )
-            options_rm = df_sel["label"].tolist()
-            choice_rm = st.selectbox(
-                "Select station to remove",
-                options=options_rm,
+            remove_choice = st.selectbox(
+                "Select a station to remove",
+                options=["(None)"] + df_sel["label"].tolist(),
                 key="expl_remove_choice",
             )
             if st.button("Remove selected", width="stretch"):
-                row_rm = df_sel[df_sel["label"] == choice_rm]
-                if not row_rm.empty:
-                    mid_rm = row_rm["monitoring_location_id"].iloc[0]
-                    st.session_state["explorer_selected_ids"] = [
-                        mid for mid in selected_ids if mid != mid_rm
-                    ]
-                    st.rerun()
-
-
+                if remove_choice != "(None)":
+                    sel_row = df_sel[df_sel["label"] == remove_choice]
+                    if not sel_row.empty:
+                        mid = sel_row["monitoring_location_id"].iloc[0]
+                        st.session_state["explorer_selected_ids"] = [
+                            x for x in selected_ids if x != mid
+                        ]
+                        st.rerun()
 def _map_ui(df_filtered: pd.DataFrame, df_all: pd.DataFrame) -> None:
     st.subheader("Map")
 

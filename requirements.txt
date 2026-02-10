@@ -1,4 +1,16 @@
-streamlit
-argon2-cffi
-pydeck
-pandas
+# Core
+streamlit>=1.30
+pandas>=1.5
+numpy>=1.23
+
+# Plotting
+matplotlib>=3.7
+
+# Data formats
+pyarrow>=12.0
+
+# HTTP / APIs
+requests>=2.31
+
+# Utils
+python-dateutil>=2.8

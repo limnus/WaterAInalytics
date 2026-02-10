@@ -41,8 +41,46 @@ def init_session_state() -> None:
         st.session_state[KEY_LAST_ACTIVITY_UTC] = None
 
 
+
+def clear_user_scoped_state(preserve: tuple[str, ...] = ("locale",)) -> None:
+    """Clear UI state that should not leak between different authenticated users.
+
+    Streamlit's st.session_state is per browser session; if you log out and log in
+    as another user in the same browser, previous UI selections would otherwise persist.
+    """
+    import streamlit as st
+
+    keep = {k: st.session_state.get(k) for k in preserve if k in st.session_state}
+
+    # Keys known to be user-scoped (UI selections / filters)
+    user_keys_prefixes = (
+        "expl_",          # Explorer filters/widgets
+    )
+    user_keys_exact = {
+        "explorer_selected_ids",
+    }
+
+    # Remove exact keys
+    for k in list(st.session_state.keys()):
+        if k in user_keys_exact:
+            del st.session_state[k]
+
+    # Remove prefixed keys
+    for k in list(st.session_state.keys()):
+        if any(k.startswith(p) for p in user_keys_prefixes):
+            # locale is preserved via keep
+            if k in keep:
+                continue
+            del st.session_state[k]
+
+    # Restore preserved keys (if any got deleted)
+    for k, v in keep.items():
+        st.session_state[k] = v
+
+
 def login(username: str, role: str) -> None:
     import streamlit as st
+    clear_user_scoped_state()
     st.session_state[KEY_LOGGED_IN] = True
     st.session_state[KEY_USERNAME] = username
     st.session_state[KEY_ROLE] = role
@@ -55,6 +93,7 @@ def login_playground() -> None:
 
 def logout() -> None:
     import streamlit as st
+    clear_user_scoped_state()
     st.session_state[KEY_LOGGED_IN] = False
     st.session_state[KEY_USERNAME] = None
     st.session_state[KEY_ROLE] = None
