@@ -14,3 +14,4 @@ requests>=2.31
 
 # Utils
 python-dateutil>=2.8
+python-dotenv

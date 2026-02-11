@@ -7,6 +7,8 @@ from typing import Dict, Any, List, Optional, Tuple
 import requests
 import pandas as pd  # para salvar em Parquet
 
+from core.utils.fs_cache import prune_tree_to_max_bytes
+
 IV_ENDPOINT = "https://waterservices.usgs.gov/nwis/iv/"
 
 # Alvos: flow e stage
@@ -377,6 +379,35 @@ def ensure_iv_window(
                 df_day[
                     ["site_no", "parameter_code", "unit", "datetime_utc", "value", "date_utc"]
                 ].to_parquet(out_path, index=False)
+
+        # Optional: keep the IV cache bounded by size (best-effort).
+        # Configure via environment variables:
+        #   IV_CACHE_MAX_MB          (e.g., 2048 for 2GB)
+        #   IV_CACHE_MIN_KEEP_FILES  (e.g., 1000; default is 1000)
+        # This is global pruning under out_root, not per-site/parameter.
+        try:
+            max_mb = int(os.getenv("IV_CACHE_MAX_MB", "0"))
+        except Exception:
+            max_mb = 0
+
+        try:
+            min_keep = int(os.getenv("IV_CACHE_MIN_KEEP_FILES", "1000"))
+        except Exception:
+            min_keep = 1000
+
+        if min_keep < 0:
+            min_keep = 0
+
+        if max_mb and max_mb > 0:
+            try:
+                prune_tree_to_max_bytes(
+                    out_root,
+                    max_bytes=max_mb * 1024 * 1024,
+                    protect_newest=min_keep,
+                )
+            except Exception:
+                # best-effort cache; never fail data acquisition due to pruning
+                pass
 
     # Agora lê todos os Parquets da janela (inclusive os "legados")
     frames: List[pd.DataFrame] = []
