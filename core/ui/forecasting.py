@@ -10,6 +10,8 @@ import numpy as np
 import pandas as pd
 import streamlit as st
 
+from core.forecast_models import PersistenceConfig, PersistenceForecast
+
 
 def _future_index_utc(horizon_hours: int) -> pd.DatetimeIndex:
     now = pd.Timestamp.utcnow().floor("H")
@@ -54,17 +56,25 @@ def _build_persistence_forecast(
     rows: list[dict] = []
     for sid in station_ids:
         last_value = _station_base_value(sid)
+        # v0.4.0: use the real persistence model implementation.
+        model = PersistenceForecast(
+            PersistenceConfig(
+                noise_frac=float(noise_frac),
+                connect_last_measured=False,  # UI expects only future steps
+                reject_nulls=True,
+                preserve_integers_if_series_integer=True,
+            )
+        )
+
         sigma = float(noise_frac) * float(abs(last_value) if last_value != 0 else 1.0)
 
         # Deterministic RNG per station/options (good for reproducible UI tests)
         seed = abs(hash((sid, horizon_hours, interval_label, noise_frac, pi_method))) % (2**32 - 1)
         rng = np.random.default_rng(seed)
 
-        # Core persistence forecast
-        if sigma > 0:
-            y_hat = last_value + rng.normal(loc=0.0, scale=sigma, size=horizon_hours)
-        else:
-            y_hat = np.full(shape=(horizon_hours,), fill_value=last_value, dtype=float)
+        # Core persistence forecast (measured series is placeholder: only the last value)
+        y_hat_list = model.forecast([float(last_value)], horizon_hours, seed=int(seed))
+        y_hat = np.asarray(y_hat_list, dtype=float)
 
         # Prediction intervals
         pi_low = np.empty_like(y_hat, dtype=float)
