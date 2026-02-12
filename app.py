@@ -19,6 +19,7 @@ from core.auth.login_ui import render_login
 from core.ui.explorer_map import render_explorer_map  # ui está dentro de core
 from core.ui.plot_timeseries import render_plot_timeseries
 from core.ui.forecasting import render_forecasting
+from core.ui.admin_models import render_admin_models
 
 # ---------------------------------
 # Locale bootstrap from .config/lang.txt
@@ -167,4 +168,4 @@ with tabs[3]:
     with admin_tabs[0]:
         st.info("Admin Users not implemented yet.")
     with admin_tabs[1]:
-        st.info("Admin Models not implemented yet.")
+        render_admin_models(role=role)

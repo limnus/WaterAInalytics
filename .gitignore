@@ -18,6 +18,7 @@ data/*.db
 data/*.csv
 data/*.parquet
 !data/README.md
+data/models/*
 
 # Logs / cache
 logs/
