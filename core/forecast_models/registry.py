@@ -1,30 +1,29 @@
 # core/forecast_models/registry.py
 from __future__ import annotations
 
-from typing import Dict, Type
-
-from .base import ForecastModel
 from .persistence import PersistenceModel
 from .ridge import RidgeModel
 from .chronos import ChronosModel
 
 
-MODEL_REGISTRY: Dict[str, Type[ForecastModel]] = {
-    "persistence": PersistenceModel,
-    "ridge": RidgeModel,
-    "chronos-tiny": ChronosModel,
-    "chronos-mini": ChronosModel,
-}
+def create_model(model_key: str):
+    key = (model_key or "").lower().strip()
 
+    if key in ("persistence", "persist"):
+        return PersistenceModel()
+    if key == "ridge":
+        return RidgeModel()
 
-def create_model(model_key: str) -> ForecastModel:
-    key = (model_key or "").strip().lower()
-    if key not in MODEL_REGISTRY:
-        raise ValueError(f"Unknown model_key='{model_key}'. Allowed: {sorted(MODEL_REGISTRY)}")
-    cls = MODEL_REGISTRY[key]
+    # Chronos-Bolt
+    if key in ("chronos-tiny", "chronos_bolt_tiny", "chronos-bolt-tiny"):
+        return ChronosModel(model_key="chronos-tiny", model_id="amazon/chronos-bolt-tiny")
+    if key in ("chronos-mini", "chronos_bolt_mini", "chronos-bolt-mini"):
+        return ChronosModel(model_key="chronos-mini", model_id="amazon/chronos-bolt-mini")
+    if key in ("chronos-base", "chronos_bolt_base", "chronos-bolt-base"):
+        return ChronosModel(model_key="chronos-base", model_id="amazon/chronos-bolt-base")
 
-    # ChronosModel needs model_key to select tiny/mini
-    if key.startswith("chronos-"):
-        return cls(model_key=key)  # type: ignore[arg-type]
+    # Chronos-T5
+    if key in ("chronos-large", "chronos_t5_large", "chronos-t5-large"):
+        return ChronosModel(model_key="chronos-large", model_id="amazon/chronos-t5-large")
 
-    return cls()  # type: ignore[call-arg]
+    raise ValueError(f"Unknown model_key: {model_key}")

@@ -64,7 +64,7 @@ S = get_strings()
 
 st.set_page_config(
     page_title=f"{S.APP_TITLE} — {APP_VERSION}",
-    page_icon="assets/brand/favicon_32x32.ico",
+    page_icon="assets/brand/favicon_32x32.png",
     layout="wide",
 )
 

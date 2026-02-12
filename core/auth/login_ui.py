@@ -84,12 +84,12 @@ def render_login(db_path: str = DEFAULT_DB_PATH) -> None:
             st.image(banner_path, width="stretch")
         except Exception:
             # Se o arquivo não existir ou der erro, simplesmente não quebra o login.
-            pass
+            st.title(S.APP_TITLE)
+            # pass
 
         # -------------------------
         # Titles
         # -------------------------
-        st.title(S.APP_TITLE)
         st.subheader(S.LOGIN_TITLE)
         st.caption(S.LOGIN_SUBTITLE)
 

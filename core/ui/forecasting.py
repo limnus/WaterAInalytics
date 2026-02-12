@@ -165,12 +165,29 @@ def _render_forecast_plot(
 # -----------------------------
 # UI
 # -----------------------------
-MODEL_OPTIONS = {
+# -----------------------------
+# Model options (role-aware)
+# -----------------------------
+# PlayGround policy: Tiny/Mini only.
+# User/Admin: may also use Bolt Base and T5 Large for benchmarking.
+_BASE_MODEL_OPTIONS = {
     "Persistence": "persistence",
     "Ridge": "ridge",
     "Chronos-Tiny": "chronos-tiny",
     "Chronos-Mini": "chronos-mini",
 }
+_ADMIN_USER_EXTRAS = {
+    "Chronos-Base": "chronos-base",     # amazon/chronos-bolt-base
+    "Chronos-Large": "chronos-large",   # amazon/chronos-t5-large
+}
+
+
+def _model_options_for_role(role: Optional[str]) -> dict[str, str]:
+    r = (role or "").lower().strip()
+    opts = dict(_BASE_MODEL_OPTIONS)
+    if r in ("admin", "user"):
+        opts.update(_ADMIN_USER_EXTRAS)
+    return opts
 
 
 def render_forecasting(role: Optional[str] = None) -> None:
@@ -180,7 +197,8 @@ def render_forecasting(role: Optional[str] = None) -> None:
       - Horizon limited to 1–3 steps
       - No training in PlayGround (Admin/User train elsewhere)
       - No History Range limit (UI may show large spans)
-      - Allowed models: Persistence, Ridge, Chronos-Tiny, Chronos-Mini
+      - Allowed models (PlayGround): Persistence, Ridge, Chronos-Tiny, Chronos-Mini
+      - User/Admin extras: Chronos-Base, Chronos-Large
       - PI: Gaussian residual-based PI only (80% fixed)
       - Persistence noise: 0..0.05, deterministic seed per session
       - No guardrails/quotas beyond the above
@@ -223,11 +241,13 @@ def render_forecasting(role: Optional[str] = None) -> None:
         st.warning("Choose at least one station to proceed.")
         return
 
+    model_options = _model_options_for_role(role)
+
     c1, c2, c3, c4 = st.columns([2, 1, 1, 1])
     with c1:
         model_label = st.selectbox(
             "Model",
-            options=list(MODEL_OPTIONS.keys()),
+            options=list(model_options.keys()),
             index=0,
         )
     with c2:
@@ -237,7 +257,7 @@ def render_forecasting(role: Optional[str] = None) -> None:
     with c4:
         run = st.button("Run forecast", type="primary")
 
-    selected_model_key = MODEL_OPTIONS[model_label]
+    selected_model_key = model_options[model_label]
 
     # --- Model-specific controls ---
     if selected_model_key == "persistence":
@@ -256,6 +276,9 @@ def render_forecasting(role: Optional[str] = None) -> None:
         "PlayGround uses a fixed, fast PI: **Gaussian residual-based 80% interval**. "
         "Training is disabled here (Admin/User training only)."
     )
+
+    if (role or '').lower().strip() in ('admin', 'user'):
+        st.caption("Admin/User: Chronos-Base and Chronos-Large are enabled for benchmarking.")
 
     if not run:
         st.info("Configure the options above, then click **Run forecast**.")

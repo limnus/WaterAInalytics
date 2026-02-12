@@ -10,22 +10,10 @@ import pandas as pd
 
 from .base import ForecastOutput, ForecastRequest
 
-
-# -----------------------------
-# Cleaning / validation
-# -----------------------------
 _SENTINELS = {999999, -999999, 1e20, -1e20}
 
 
 def _ensure_datetime_value(df: pd.DataFrame) -> pd.DataFrame:
-    """Normalize and clean a history dataframe to the schema: Datetime (UTC), Value (float).
-
-    Conservative cleaning to avoid catastrophic artifacts:
-      - Coerces datetimes and numeric values
-      - Drops NaNs
-      - Removes common sentinel values (e.g., 999999)
-      - Removes extreme outliers (very wide bound) to block pathological values
-    """
     if df is None or df.empty:
         raise ValueError("history is empty")
     if "Datetime" not in df.columns or "Value" not in df.columns:
@@ -39,15 +27,11 @@ def _ensure_datetime_value(df: pd.DataFrame) -> pd.DataFrame:
     if out.empty:
         raise ValueError("history has no valid Datetime/Value rows after cleaning")
 
-    # Remove numerically-valid but semantically-invalid sentinel values.
     out = out[~out["Value"].isin(list(_SENTINELS))]
-
-    # Extremely wide outlier guard (keeps legitimate large values, blocks sentinels)
     out = out[(out["Value"] > -1e12) & (out["Value"] < 1e12)]
 
     if out.empty:
         raise ValueError("history is empty after removing sentinel/outlier values")
-
     return out
 
 
@@ -61,16 +45,7 @@ def _is_all_nonneg(series: pd.Series) -> bool:
     return v.size > 0 and np.all(v >= 0)
 
 
-# -----------------------------
-# Feature engineering (lightweight)
-# -----------------------------
-def _build_features(
-    values: np.ndarray,
-    *,
-    lags: List[int],
-    roll_means: List[int],
-) -> np.ndarray:
-    """Build a single feature vector for the NEXT step based on current value history."""
+def _build_features(values: np.ndarray, *, lags: List[int], roll_means: List[int]) -> np.ndarray:
     feats: List[float] = []
     n = len(values)
     for lag in lags:
@@ -84,17 +59,11 @@ def _build_features(
 
 
 def _build_supervised_matrix(
-    series: pd.Series,
-    *,
-    lags: List[int],
-    roll_means: List[int],
+    series: pd.Series, *, lags: List[int], roll_means: List[int]
 ) -> Tuple[np.ndarray, np.ndarray]:
-    """Create X,y for 1-step forecasting.
-
-    Target y[t] uses features computed from history up to t-1.
-    """
     y = series.astype(float).values
     max_lookback = max(max(lags, default=1), max(roll_means, default=1))
+
     rows_x: List[np.ndarray] = []
     rows_y: List[float] = []
 
@@ -114,9 +83,6 @@ def _build_supervised_matrix(
     return X, Y
 
 
-# -----------------------------
-# Standardization + Ridge solver (no sklearn)
-# -----------------------------
 def _standardize_fit(X: np.ndarray) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
     mu = X.mean(axis=0)
     sd = X.std(axis=0)
@@ -130,7 +96,6 @@ def _standardize_apply(X: np.ndarray, mu: np.ndarray, sd: np.ndarray) -> np.ndar
 
 
 def _ridge_fit_closed_form(X: np.ndarray, y: np.ndarray, alpha: float) -> np.ndarray:
-    """Closed-form Ridge: w = (X^T X + alpha I)^-1 X^T y"""
     n_features = X.shape[1]
     A = X.T @ X + alpha * np.eye(n_features)
     b = X.T @ y
@@ -142,17 +107,8 @@ def _ridge_predict(X: np.ndarray, w: np.ndarray) -> np.ndarray:
     return X @ w
 
 
-# -----------------------------
-# Model runtime
-# -----------------------------
 @dataclass
 class RidgeModel:
-    """Lightweight Ridge forecaster (no sklearn dependency).
-
-    Artifacts in artifacts_dir:
-      - meta.json (hyperparams, sigma, feature defs)
-      - weights.npz (w, mu, sd)
-    """
     model_key: str = "ridge"
 
     def load_artifacts(self, artifacts_dir: Path, station_id: str, parameter: str) -> Dict[str, Any]:
@@ -186,10 +142,7 @@ class RidgeModel:
 
         last_dt = pd.to_datetime(df["Datetime"].iloc[-1], utc=True)
         future_idx = pd.date_range(
-            last_dt + pd.Timedelta(hours=1),
-            periods=req.horizon,
-            freq=req.freq,
-            tz="UTC",
+            last_dt + pd.Timedelta(hours=1), periods=req.horizon, freq=req.freq, tz="UTC"
         )
 
         values = series.astype(float).values.copy()
@@ -206,7 +159,6 @@ class RidgeModel:
 
         y_pred = pd.Series(preds, index=future_idx, name="y_pred")
 
-        # Post-processing rules
         all_int = bool(artifacts.get("all_int", _is_all_int(series)))
         all_pos = bool(artifacts.get("all_nonneg", _is_all_nonneg(series)))
         if all_pos:
@@ -214,12 +166,11 @@ class RidgeModel:
         if all_int:
             y_pred = y_pred.round().astype(int)
 
-        # Sigma for PI (avoid degenerate 0 in UI)
         sigma = float(artifacts.get("sigma_residual", 0.0))
         sigma = max(0.0, sigma)
         if sigma == 0.0:
             last_val = float(series.iloc[-1])
-            sigma = max(0.01, 0.01 * abs(last_val))  # conservative floor for visibility
+            sigma = max(0.01, 0.01 * abs(last_val))
 
         return ForecastOutput(
             station_id=req.station_id,
@@ -237,9 +188,16 @@ class RidgeModel:
         )
 
 
-# -----------------------------
-# Training helpers (Admin/User)
-# -----------------------------
+def _compute_sigma_rmse(resid: np.ndarray) -> tuple[float, float]:
+    resid = np.asarray(resid, dtype=float)
+    if resid.size >= 2:
+        sigma = float(np.std(resid, ddof=1))
+    else:
+        sigma = float(np.std(resid))
+    rmse = float(np.sqrt(np.mean(resid**2))) if resid.size else float("nan")
+    return max(0.0, sigma), rmse
+
+
 def train_ridge_from_history(
     history_df: pd.DataFrame,
     *,
@@ -249,13 +207,6 @@ def train_ridge_from_history(
     valid_frac: float = 0.2,
     min_valid: int = 24,
 ) -> Dict[str, Any]:
-    """Train Ridge artifacts from a Datetime/Value history dataframe.
-
-    Robustness changes:
-      - Removes sentinel values (e.g., 999999) before training
-      - Enforces a minimum validation size (min_valid) so sigma isn't spuriously 0
-      - Computes sigma on validation if possible, else falls back to training residual sigma
-    """
     df = _ensure_datetime_value(history_df)
     series = df["Value"].astype(float)
 
@@ -263,10 +214,8 @@ def train_ridge_from_history(
     roll_means = roll_means or [3, 6, 12, 24]
 
     X, y = _build_supervised_matrix(series, lags=lags, roll_means=roll_means)
-
     n = len(y)
 
-    # time-ordered split with minimum validation size
     n_valid = max(int(round(n * float(valid_frac))), int(min_valid))
     n_valid = min(n_valid, max(1, n - 1))
     n_train = max(1, n - n_valid)
@@ -279,28 +228,15 @@ def train_ridge_from_history(
 
     w = _ridge_fit_closed_form(Xs_train, y_train, float(alpha))
 
-    # Validation residuals (preferred)
-    yhat_valid = _ridge_predict(Xs_valid, w)
-    resid_valid = y_valid - yhat_valid
-
-    # Training residuals (fallback)
-    yhat_train = _ridge_predict(Xs_train, w)
-    resid_train = y_train - yhat_train
-
-    sigma = 0.0
-    rmse = float("nan")
+    resid_valid = y_valid - _ridge_predict(Xs_valid, w)
+    resid_train = y_train - _ridge_predict(Xs_train, w)
 
     if resid_valid.size >= 2:
-        sigma = float(np.std(resid_valid, ddof=1))
-        rmse = float(np.sqrt(np.mean((resid_valid) ** 2)))
+        sigma, rmse = _compute_sigma_rmse(resid_valid)
     elif resid_train.size >= 2:
-        sigma = float(np.std(resid_train, ddof=1))
-        rmse = float(np.sqrt(np.mean((resid_train) ** 2)))
+        sigma, rmse = _compute_sigma_rmse(resid_train)
     else:
-        sigma = 0.0
-        rmse = float("nan")
-
-    sigma = max(0.0, float(sigma))
+        sigma, rmse = 0.0, float("nan")
 
     all_int = _is_all_int(series)
     all_nonneg = _is_all_nonneg(series)
@@ -309,7 +245,7 @@ def train_ridge_from_history(
         "alpha": float(alpha),
         "lags": list(lags),
         "roll_means": list(roll_means),
-        "sigma_residual": sigma,
+        "sigma_residual": float(sigma),
         "rmse_valid": float(rmse),
         "n_rows": int(len(df)),
         "n_supervised": int(n),
@@ -321,6 +257,46 @@ def train_ridge_from_history(
         "_mu": mu,
         "_sd": sd,
     }
+
+
+def tune_ridge_alpha(
+    history_df: pd.DataFrame,
+    *,
+    alphas: List[float],
+    lags: List[int] | None = None,
+    roll_means: List[int] | None = None,
+    valid_frac: float = 0.2,
+    min_valid: int = 24,
+) -> Dict[str, Any]:
+    if not alphas:
+        raise ValueError("alphas grid is empty")
+
+    rmse_by_alpha: Dict[str, float] = {}
+    best_artifacts: Dict[str, Any] | None = None
+    best_rmse = float("inf")
+
+    for a in alphas:
+        art = train_ridge_from_history(
+            history_df,
+            alpha=float(a),
+            lags=lags,
+            roll_means=roll_means,
+            valid_frac=valid_frac,
+            min_valid=min_valid,
+        )
+        rmse = float(art.get("rmse_valid", float("inf")))
+        rmse_by_alpha[f"{float(a):g}"] = rmse
+        if np.isfinite(rmse) and rmse < best_rmse:
+            best_rmse = rmse
+            best_artifacts = art
+
+    if best_artifacts is None:
+        best_artifacts = train_ridge_from_history(history_df, alpha=float(alphas[0]), lags=lags, roll_means=roll_means)
+
+    best_artifacts["alpha_grid"] = [float(a) for a in alphas]
+    best_artifacts["rmse_by_alpha"] = rmse_by_alpha
+    best_artifacts["best_alpha"] = float(best_artifacts["alpha"])
+    return best_artifacts
 
 
 def save_ridge_artifacts(artifacts_dir: Path, artifacts: Dict[str, Any]) -> None:
