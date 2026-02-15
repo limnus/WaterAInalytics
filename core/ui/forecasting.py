@@ -30,13 +30,13 @@ def _build_synthetic_history_utc(station_id: str, hours: int = 14 * 24) -> pd.Da
 
     This is a temporary stand-in until real station/parameter time series are wired.
     """
-    end = pd.Timestamp.utcnow().floor("H")
+    end = pd.Timestamp.utcnow().floor("h")
     if end.tzinfo is None:
         end = end.tz_localize("UTC")
     else:
         end = end.tz_convert("UTC")
 
-    idx = pd.date_range(end - pd.Timedelta(hours=hours - 1), periods=hours, freq="H", tz="UTC")
+    idx = pd.date_range(end - pd.Timedelta(hours=hours - 1), periods=hours, freq="h", tz="UTC")
 
     base = _station_base_value(station_id)
 
@@ -128,7 +128,7 @@ def _render_forecast_plot(
             hi = d["pi_high"].astype(float).values
             if len(d) >= 2:
                 ax.fill_between(
-                    d["timestamp_utc"].dt.to_pydatetime(),
+                    d["timestamp_utc"].dt.to_pydatetime().astype("datetime64[ns]"),
                     lo,
                     hi,
                     alpha=0.15,
