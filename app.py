@@ -19,6 +19,7 @@ from core.auth.login_ui import render_login
 from core.ui.explorer_map import render_explorer_map  # ui está dentro de core
 from core.ui.plot_timeseries import render_plot_timeseries
 from core.ui.forecasting import render_forecasting
+from core.ui.agentic_analysis import render_agentic_analysis
 from core.ui.admin_models import render_admin_models
 
 # ---------------------------------
@@ -152,7 +153,7 @@ if new_locale != current_locale:
 st.title(f"{S.APP_TITLE} — {APP_VERSION}")
 
 # Abas principais
-tabs = st.tabs(["Explorer & Map", "Plot Time Series", "Forecasting", "Admin Panel"])
+tabs = st.tabs(["Explorer & Map", "Plot Time Series", "Forecasting", "Agentic AI Forecasting Analysis", "Admin Panel"])
 
 with tabs[0]:
     render_explorer_map(role=role)
@@ -164,6 +165,9 @@ with tabs[2]:
     render_forecasting(role=role)
 
 with tabs[3]:
+    render_agentic_analysis(role=role)
+
+with tabs[4]:
     admin_tabs = st.tabs(["Admin Users", "Admin Models"])
     with admin_tabs[0]:
         st.info("Admin Users not implemented yet.")

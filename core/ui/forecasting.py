@@ -337,6 +337,13 @@ def render_forecasting(role: Optional[str] = None) -> None:
         y_pred = out.y_pred
         sigma = float(out.sigma_residual)
 
+        # --- Persist latest forecast for Agentic Analysis ---
+        st.session_state["latest_forecast_output"] = out
+        st.session_state["latest_history_df"] = history_df.copy()
+        st.session_state["latest_station_ids"] = station_ids
+        st.session_state["latest_model_key"] = selected_model_key
+        st.session_state["latest_horizon"] = horizon_i
+
         if use_pi:
             pi = gaussian_residual_pi(y_pred, sigma, level=0.8)
             pi_low = pi.lower
