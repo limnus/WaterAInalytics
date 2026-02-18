@@ -46,7 +46,7 @@ class AnalysisConfig:
     report_style: ReportStyle = ReportStyle()
 
     # v0.8.0: adds structured artifacts (evidence/claims/narrative) to run.json (append-only)
-    schema_version: str = "0.8.0"
+    schema_version: str = "0.8.1"
 
     # Optional knobs; keep small in v0.6.0
     collector_opts: Optional[Dict[str, str]] = None

@@ -1,0 +1,44 @@
+{
+  "cases": [
+    {
+      "case_id": "47a72e36-5819-4753-9b1c-2776aef42826",
+      "run_json": "C:\\Users\\limnu\\AppData\\Local\\Temp\\agentic_analysis\\USGS-02430005\\Value\\2026-02-18\\0a0a6148fb390be3683d1dce5eb43435a128899f7b7e96a495c03c6cf6e5245d\\run.json",
+      "expected_claim_types": null
+    },
+    {
+      "case_id": "b0bb267d-c1a0-4f48-a025-ca32f1f19009",
+      "run_json": "C:\\Users\\limnu\\AppData\\Local\\Temp\\agentic_analysis\\USGS-02430005\\Value\\2026-02-18\\1e3f99d89bb1fbfec6eaa77c557e926f7796220da639cee75bf848b46e7115d9\\run.json",
+      "expected_claim_types": null
+    },
+    {
+      "case_id": "0aab851f-6917-4e26-9f27-21939fad91b8",
+      "run_json": "C:\\Users\\limnu\\AppData\\Local\\Temp\\agentic_analysis\\USGS-02430005\\Value\\2026-02-18\\26a3af5d154e5e6846030683a45de38cb308e387ec402c16003d0b2df6e192bd\\run.json",
+      "expected_claim_types": null
+    },
+    {
+      "case_id": "e5f9ca72-a86a-471a-a27e-47521ef7ae59",
+      "run_json": "C:\\Users\\limnu\\AppData\\Local\\Temp\\agentic_analysis\\USGS-02430005\\Value\\2026-02-18\\66cc4f7dc616cfc7ee9093376c8f6d42d2d76811612af60e829b9faf8cda0076\\run.json",
+      "expected_claim_types": null
+    },
+    {
+      "case_id": "47c29725-53c2-4c87-8a20-f96a12be0e20",
+      "run_json": "C:\\Users\\limnu\\AppData\\Local\\Temp\\agentic_analysis\\USGS-02430005\\Value\\2026-02-18\\7c7d7a153410f10baf9ad242b3bc68825df84d5d3e205bb00f78a759205c4fa3\\run.json",
+      "expected_claim_types": null
+    },
+    {
+      "case_id": "f7faaaf4-6a76-4a63-bc18-c83ff977aa5d",
+      "run_json": "C:\\Users\\limnu\\AppData\\Local\\Temp\\agentic_analysis\\USGS-02430005\\Value\\2026-02-18\\7dd45d8bb87a5a6b9e2bc1d3ab771ff2bc0476cfd9e189e14200819a4766e769\\run.json",
+      "expected_claim_types": null
+    },
+    {
+      "case_id": "50afa2e7-35cc-40b3-8498-723a0d72923b",
+      "run_json": "C:\\Users\\limnu\\AppData\\Local\\Temp\\agentic_analysis\\USGS-02430005\\Value\\2026-02-18\\90fcd7000a477bb13533a948a94246f8d1e5458a6d48dc613987557828867934\\run.json",
+      "expected_claim_types": null
+    },
+    {
+      "case_id": "2e1721ab-71bd-4ded-8f6b-ffe4ccf87f72",
+      "run_json": "C:\\Users\\limnu\\AppData\\Local\\Temp\\agentic_analysis\\USGS-02430005\\Value\\2026-02-18\\ea2684ec78157bdc2ea513becfb2981ca7ab9c437b6f0ee182319765df5ca9f6\\run.json",
+      "expected_claim_types": null
+    }
+  ]
+}
