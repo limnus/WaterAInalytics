@@ -21,7 +21,14 @@ from core.forecast_models.ridge import (
 
 
 def _project_root() -> Path:
-    return Path(__file__).resolve().parents[3]
+    """Return repository root (folder that contains app.py).
+
+    For this file (core/ui/admin_models.py):
+    - parents[0] = core/ui
+    - parents[1] = core
+    - parents[2] = project root
+    """
+    return Path(__file__).resolve().parents[2]
 
 
 def _stations_csv_path() -> Path:

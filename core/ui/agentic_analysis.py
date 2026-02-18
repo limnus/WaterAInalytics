@@ -138,4 +138,14 @@ def render_agentic_analysis(role: str | None = None) -> None:
         st.markdown(result.report.content)
 
         st.markdown("### Audit Info")
-        st.json(result.audit.llm)
+        st.json({
+    "run_id": result.audit.run_id,
+    "schema_version": result.audit.schema_version,
+    "mode": result.audit.mode,
+    "budgets": result.audit.budgets,
+    "timing_ms": result.audit.timing_ms,
+    "warnings": result.audit.warnings,
+    "llm": result.audit.llm,
+    "queries": result.audit.queries,
+    "sources": result.audit.sources_summary,
+})

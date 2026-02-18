@@ -18,9 +18,16 @@ BASE_STATIONS_FILENAME = "usgs_00060_00065_base_from_ts_metadata.csv"
 
 
 def _project_root() -> Path:
-    # Estamos em core/ui/explorer_map.py → sobe 2 níveis até a raiz do projeto
-    # parents[0] = explorer_map.py, [1] = ui, [2] = core, [3] = raiz
-    return Path(__file__).resolve().parents[3]
+    """Return repository root (folder that contains app.py).
+
+    NOTE: ``Path.parents`` is a sequence of *directories* (not including the file
+    itself). For this file (core/ui/explorer_map.py):
+
+    - parents[0] = core/ui
+    - parents[1] = core
+    - parents[2] = project root
+    """
+    return Path(__file__).resolve().parents[2]
 
 
 def _stations_csv_path() -> Path:

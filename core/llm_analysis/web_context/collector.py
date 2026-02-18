@@ -14,6 +14,11 @@ import requests
 from core.llm_analysis.config import AnalysisConfig
 from core.llm_analysis.forecast_integration.models import ForecastContext
 from core.llm_analysis.web_context.models import QueryPlan, SourceDoc, Snippet
+from core.llm_analysis.web_context.normalize import normalize_html_to_text
+from core.llm_analysis.web_context.url_cache import load_from_cache, save_to_cache, UrlCacheEntry
+import hashlib
+from pathlib import Path
+
 from core.llm_analysis.cache.keying import stable_json_hash
 
 
@@ -189,8 +194,24 @@ def _extract_title_from_html(html: str) -> Optional[str]:
 def fetch_page_text(
     url: str,
     session: requests.Session,
+    *,
     timeout_s: int = 20,
-) -> Tuple[str, Optional[str]]:
+    max_chars: int = 12_000,
+    url_cache_dir: Path | None = None,
+    url_cache_ttl_days: int = 7,
+) -> Tuple[str, Optional[str], List[str], bool, int, bool]:
+    """
+    Fetches a URL and returns a sanitized text representation.
+
+    Returns:
+      text, title, flags, truncated, char_count, cache_hit
+    """
+    # URL cache (optional)
+    if url_cache_dir is not None:
+        hit = load_from_cache(url_cache_dir, url, ttl_days=url_cache_ttl_days)
+        if hit is not None:
+            return hit.sanitized_text, hit.title, list(hit.flags), bool(hit.truncated), len(hit.sanitized_text or ""), True
+
     headers = {
         "User-Agent": (
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
@@ -206,11 +227,34 @@ def fetch_page_text(
 
     ct = (r.headers.get("Content-Type") or "").lower()
     if ct and ("text/html" not in ct and "application/xhtml" not in ct):
-        return "", None
+        return "", None, ["non_html_content_type"], False, 0, False
 
-    html = r.text[:2_000_000]
-    title = _extract_title_from_html(html)
-    return _html_to_text(html), title
+    html = (r.text or "")[:2_000_000]
+    norm = normalize_html_to_text(html, max_chars=max_chars)
+
+    # Save to URL cache (optional)
+    if url_cache_dir is not None and norm.text:
+        host = (urlparse(url).netloc or "").lower()
+        content_hash = hashlib.sha256((norm.text or "").encode("utf-8")).hexdigest()
+        entry = UrlCacheEntry(
+            url=url,
+            host=host,
+            retrieved_at_utc=_utc_now_iso(),
+            stored_at_epoch=int(time.time()),
+            title=norm.title,
+            sanitized_text=norm.text,
+            content_hash=content_hash,
+            flags=list(norm.flags),
+            truncated=bool(norm.truncated),
+        )
+        try:
+            save_to_cache(url_cache_dir, entry)
+        except Exception:
+            # Cache must not break the run
+            pass
+
+    return norm.text, norm.title, list(norm.flags), bool(norm.truncated), int(norm.char_count), False
+
 
 
 def _round_robin_by_host(candidate_urls: List[Tuple[str, str]], url_budget: int) -> List[Tuple[str, str]]:
@@ -247,7 +291,8 @@ def collect_web_context(
     cfg: AnalysisConfig,
     forecast_ctx: ForecastContext,
     query_plan: QueryPlan,
-) -> Tuple[List[SourceDoc], List[Snippet], int]:
+    cache_root: Path,
+) -> Tuple[List[SourceDoc], List[Snippet], int, dict[str, str]]:
     max_pages = int(cfg.page_policy.max_pages)
     dedup = bool(cfg.page_policy.dedup_urls)
 
@@ -257,6 +302,19 @@ def collect_web_context(
 
     seen_urls = set()
     mode = (getattr(cfg, "mode", "") or "").lower().strip()
+
+    evidence_text_by_source_id: dict[str, str] = {}
+    seen_content_hashes: set[str] = set()
+
+    # URL-level cache (shared across runs)
+    url_cache_dir = Path(cache_root) / "web_url_cache"
+    ttl_days = 7
+    try:
+        if cfg.collector_opts and "url_cache_ttl_days" in cfg.collector_opts:
+            ttl_days = int(cfg.collector_opts.get("url_cache_ttl_days") or ttl_days)
+    except Exception:
+        ttl_days = 7
+
 
     # NEW: host diversity controls
     host_counts = {}
@@ -309,7 +367,14 @@ def collect_web_context(
             seen_urls.add(url)
 
             try:
-                text, title = fetch_page_text(url, session=sess)
+                text, title, flags, truncated, char_count, cache_hit = fetch_page_text(
+                    url,
+                    session=sess,
+                    timeout_s=20,
+                    max_chars=int(cfg.page_policy.max_chars_per_page),
+                    url_cache_dir=url_cache_dir if cfg.use_cache else None,
+                    url_cache_ttl_days=ttl_days,
+                )
             except Exception:
                 continue
 
@@ -318,6 +383,13 @@ def collect_web_context(
 
             used_pages += 1
             retrieved_at = _utc_now_iso()
+
+            # Deduplicate by normalized content hash to reduce near-duplicate sources
+            content_hash = hashlib.sha256((text or "").encode("utf-8")).hexdigest()
+            if content_hash in seen_content_hashes:
+                continue
+            seen_content_hashes.add(content_hash)
+
 
             source_id = stable_json_hash({"url": url, "retrieved_at": retrieved_at})[:12]
             sources.append(
@@ -328,8 +400,16 @@ def collect_web_context(
                     publisher=host or None,
                     retrieved_at_utc=retrieved_at,
                     published_at_utc=None,
+                    host=host or None,
+                    content_hash=content_hash,
+                    sanitized_char_count=int(char_count),
+                    truncated=bool(truncated),
+                    flags=list(flags) if flags else [],
+                    cache_hit=bool(cache_hit),
                 )
             )
+            evidence_text_by_source_id[source_id] = text
+
 
             snips = _pick_snippets(
                 text=text,
@@ -352,4 +432,4 @@ def collect_web_context(
 
             time.sleep(0.2)
 
-    return sources, snippets, used_pages
+    return sources, snippets, used_pages, evidence_text_by_source_id

@@ -45,7 +45,7 @@ class AnalysisConfig:
     page_policy: PagePolicy = PagePolicy(max_pages=10)
     report_style: ReportStyle = ReportStyle()
 
-    schema_version: str = "0.6.0"
+    schema_version: str = "0.7.0"
 
     # Optional knobs; keep small in v0.6.0
     collector_opts: Optional[Dict[str, str]] = None

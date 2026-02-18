@@ -2,41 +2,56 @@ from __future__ import annotations
 
 import json
 import time
+import uuid
 from pathlib import Path
 from typing import List
 
-from core.llm_analysis.config import AnalysisConfig
-from core.llm_analysis.models import AnalysisRunResult, AuditTrail, ReportArtifact
 from core.llm_analysis.cache.keying import build_cache_key, stable_json_hash
 from core.llm_analysis.cache.store import load_json, save_json
-from core.llm_analysis.web_context.models import QueryPlan, SourceDoc, Snippet
-from core.llm_analysis.web_context.collector import collect_web_context
-from core.llm_analysis.extraction.models import FactBundle, FactItem, FactEvidence
-from core.llm_analysis.extraction.fact_extractor import extract_facts_rule_based
-from core.llm_analysis.report.generator import generate_report_md
+from core.llm_analysis.config import AnalysisConfig
+from core.llm_analysis.extraction.models import FactBundle, FactEvidence, FactItem
 from core.llm_analysis.forecast_integration.models import ForecastContext
+from core.llm_analysis.models import AnalysisRunResult, AuditTrail, ReportArtifact
+from core.llm_analysis.tools.extract_tool import tool_extract_facts_rule_based
+from core.llm_analysis.tools.plan_tool import tool_build_query_plan
+from core.llm_analysis.tools.report_tool import tool_generate_report_md
+from core.llm_analysis.tools.web_tool import tool_collect_web_context
+from core.llm_analysis.web_context.models import QueryPlan, SourceDoc, Snippet
 
 
 class FixedPipelineOrchestrator:
-    """Deterministic MVP orchestrator (no agent framework)."""
+    """Deterministic orchestrator (no agent framework).
+
+    v0.7.x notes:
+      - Query templates are centralized in web_context/queries.py (planner-lite).
+      - Pipeline steps are called via internal tools (LLM-ready but deterministic).
+    """
 
     def run(self, cfg: AnalysisConfig, forecast_ctx: ForecastContext, cache_root: Path) -> AnalysisRunResult:
         t0 = time.time()
 
-        # More focused query plan (reduces irrelevant "forecast drivers" business content)
-        query_plan = QueryPlan(
-            queries=[
-                f"{forecast_ctx.station_id} site:waterdata.usgs.gov",
-                f"{forecast_ctx.station_id} USGS NWIS site_no",
-                f"{forecast_ctx.station_id} monitoring location USGS",
-                "USGS Water Services API instantaneous values iv service",
-                "USGS Water Services API daily values dv service",
-                "USGS how can I obtain river forecasts flood forecasts",
-                f"{forecast_ctx.station_id} discharge streamflow gage height",
-            ],
-            notes="MVP query plan (USGS/hydrology-focused).",
+        run_id = str(uuid.uuid4())
+        created_at_utc = forecast_ctx.run_datetime_utc.isoformat()
+        budgets = {
+            "max_pages": int(cfg.page_policy.max_pages),
+            "max_snippets_per_page": int(cfg.page_policy.max_snippets_per_page),
+            "max_chars_per_page": int(cfg.page_policy.max_chars_per_page),
+        }
+
+        # Planner-lite (deterministic, profile-aware)
+        query_plan: QueryPlan = tool_build_query_plan(forecast_ctx=forecast_ctx, cfg=cfg)
+        queries_tagged = [
+            {"q": tq.q, "section": tq.section} for tq in (query_plan.tagged_queries or [])
+        ]
+
+        # Hash should be stable and methodology-relevant (tagged preferred, fallback to raw queries)
+        query_plan_hash = stable_json_hash(
+            {
+                "profile": query_plan.profile,
+                "queries_tagged": queries_tagged if queries_tagged else list(query_plan.queries),
+                "notes": query_plan.notes,
+            }
         )
-        query_plan_hash = stable_json_hash({"queries": query_plan.queries, "notes": query_plan.notes})
 
         cache_payload = {
             "station_id": forecast_ctx.station_id,
@@ -46,6 +61,7 @@ class FixedPipelineOrchestrator:
             "forecast_output_hash": forecast_ctx.provenance.forecast_output_hash,
             "schema_version": cfg.schema_version,
             "query_plan_hash": query_plan_hash,
+            "query_profile": query_plan.profile,
             "max_pages": cfg.page_policy.max_pages,
             "tone": cfg.report_style.tone,
             "max_snippets_per_page": cfg.page_policy.max_snippets_per_page,
@@ -67,6 +83,8 @@ class FixedPipelineOrchestrator:
         sources_path = run_dir / "sources.json"
         snippets_path = run_dir / "snippets.jsonl"
         audit_path = run_dir / "audit.json"
+        run_path = run_dir / "run.json"
+        evidence_dir = run_dir / "evidence"
 
         # -------------------------
         # Cache hit
@@ -74,7 +92,12 @@ class FixedPipelineOrchestrator:
         if cfg.use_cache and not cfg.force_refresh and report_path.exists() and facts_path.exists() and sources_path.exists():
             facts_obj = load_json(facts_path) or {}
             sources_obj = load_json(sources_path) or {}
-            audit_obj = load_json(audit_path) or {}
+
+            # v0.7.x: prefer run.json (richer). Fallback to audit.json for backward-compat.
+            if run_path.exists():
+                audit_obj = load_json(run_path) or {}
+            else:
+                audit_obj = load_json(audit_path) or {}
 
             # Sources
             sources: List[SourceDoc] = [SourceDoc(**s) for s in sources_obj.get("sources", [])]
@@ -92,7 +115,7 @@ class FixedPipelineOrchestrator:
                     snippets = []
 
             # Facts (full load)
-            facts_list = []
+            facts_list: List[FactItem] = []
             for f in facts_obj.get("facts", []) or []:
                 evs = [FactEvidence(**e) for e in (f.get("evidence", []) or [])]
                 f2 = dict(f)
@@ -127,29 +150,59 @@ class FixedPipelineOrchestrator:
                     llm=audit_obj.get("llm", {}),
                     timing_ms=audit_obj.get("timing_ms", {}),
                     warnings=audit_obj.get("warnings", []),
+                    run_id=audit_obj.get("run_id"),
+                    schema_version=audit_obj.get("schema_version"),
+                    mode=audit_obj.get("mode"),
+                    budgets=audit_obj.get("budgets"),
+                    query_profile=audit_obj.get("query_profile"),
+                    queries=audit_obj.get("queries"),
+                    queries_tagged=audit_obj.get("queries_tagged"),
+                    sources_summary=audit_obj.get("sources_summary"),
                 ),
             )
 
         # -------------------------
         # Cache miss -> collect web
         # -------------------------
-        sources, snippets, used_pages = collect_web_context(
+        timing_ms: dict[str, int] = {}
+        warnings: list[str] = []
+
+        t_collect = time.time()
+        sources, snippets, used_pages, evidence_texts = tool_collect_web_context(
             cfg=cfg,
             forecast_ctx=forecast_ctx,
             query_plan=query_plan,
+            cache_root=cache_root,
         )
+        timing_ms["collect_web_ms"] = int((time.time() - t_collect) * 1000)
+
+        # Persist sanitized evidence text for reproducibility (best-effort)
+        try:
+            evidence_dir.mkdir(parents=True, exist_ok=True)
+            for sid, txt in (evidence_texts or {}).items():
+                if not sid or not txt:
+                    continue
+                (evidence_dir / f"{sid}.txt").write_text(txt, encoding="utf-8")
+        except Exception:
+            warnings.append("evidence_persist_failed")
 
         # -------------------------
-        # Facts (rule-based MVP)
+        # Facts (rule-based)
         # -------------------------
-        facts = extract_facts_rule_based(
+        t_extract = time.time()
+        facts = tool_extract_facts_rule_based(
             cfg=cfg,
             forecast_ctx=forecast_ctx,
             sources=sources,
             snippets=snippets,
         )
+        timing_ms["extract_facts_ms"] = int((time.time() - t_extract) * 1000)
 
-        report = generate_report_md(
+        # -------------------------
+        # Report
+        # -------------------------
+        t_report = time.time()
+        report = tool_generate_report_md(
             style=cfg.report_style,
             forecast=forecast_ctx,
             facts=facts,
@@ -157,12 +210,12 @@ class FixedPipelineOrchestrator:
             used_pages=used_pages,
             max_pages=cfg.page_policy.max_pages,
         )
+        timing_ms["generate_report_ms"] = int((time.time() - t_report) * 1000)
 
-        created_at = forecast_ctx.run_datetime_utc.isoformat()
-        timing_ms = {"total": int((time.time() - t0) * 1000)}
+        timing_ms["total_ms"] = int((time.time() - t0) * 1000)
 
         # -------------------------
-        # Persist audit artifacts
+        # Persist artifacts
         # -------------------------
         run_dir.mkdir(parents=True, exist_ok=True)
 
@@ -172,7 +225,6 @@ class FixedPipelineOrchestrator:
             for sn in snippets:
                 f.write(json.dumps(sn.__dict__, ensure_ascii=False) + "\n")
 
-        # Persist full facts structure (including evidence)
         save_json(
             facts_path,
             {
@@ -192,19 +244,47 @@ class FixedPipelineOrchestrator:
         )
 
         report_path.write_text(report.content, encoding="utf-8")
-        save_json(
-            audit_path,
+
+        sources_summary = [
             {
-                "created_at_utc": created_at,
-                "llm": {"provider": None, "model": None, "prompt_hashes": {}},
-                "timing_ms": timing_ms,
-                "warnings": [],
-            },
-        )
+                "source_id": getattr(s, "source_id", None),
+                "url": getattr(s, "url", None),
+                "host": getattr(s, "host", None),
+                "title": getattr(s, "title", None),
+                "publisher": getattr(s, "publisher", None),
+                "retrieved_at_utc": getattr(s, "retrieved_at_utc", None),
+                "published_at_utc": getattr(s, "published_at_utc", None),
+                "content_hash": getattr(s, "content_hash", None),
+                "sanitized_char_count": getattr(s, "sanitized_char_count", None),
+                "truncated": getattr(s, "truncated", None),
+                "flags": getattr(s, "flags", None) or [],
+                "cache_hit": getattr(s, "cache_hit", None),
+            }
+            for s in sources
+        ]
+
+        audit_obj = {
+            "run_id": run_id,
+            "schema_version": getattr(cfg, "schema_version", None),
+            "mode": getattr(cfg, "mode", None),
+            "created_at_utc": created_at_utc,
+            "budgets": budgets,
+            "query_profile": query_plan.profile,
+            "queries": list(query_plan.queries),
+            "queries_tagged": queries_tagged,
+            "llm": {"provider": None, "model": None, "prompt_hashes": {}},
+            "timing_ms": timing_ms,
+            "warnings": warnings,
+            "sources_summary": sources_summary,
+        }
+
+        # v0.7.x: persist richer run.json; keep audit.json for backward compatibility
+        save_json(run_path, audit_obj)
+        save_json(audit_path, audit_obj)
 
         return AnalysisRunResult(
             cache_key=cache_key,
-            created_at_utc=created_at,
+            created_at_utc=created_at_utc,
             forecast_context=forecast_ctx,
             query_plan=query_plan,
             sources=sources,
@@ -214,6 +294,14 @@ class FixedPipelineOrchestrator:
             audit=AuditTrail(
                 llm={"provider": None, "model": None, "prompt_hashes": {}},
                 timing_ms=timing_ms,
-                warnings=[],
+                warnings=warnings,
+                run_id=run_id,
+                schema_version=getattr(cfg, "schema_version", None),
+                mode=getattr(cfg, "mode", None),
+                budgets=budgets,
+                query_profile=query_plan.profile,
+                queries=list(query_plan.queries),
+                queries_tagged=queries_tagged,
+                sources_summary=sources_summary,
             ),
         )
