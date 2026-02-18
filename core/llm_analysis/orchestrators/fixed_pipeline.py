@@ -12,7 +12,8 @@ from core.llm_analysis.config import AnalysisConfig
 from core.llm_analysis.extraction.models import FactBundle, FactEvidence, FactItem
 from core.llm_analysis.forecast_integration.models import ForecastContext
 from core.llm_analysis.models import AnalysisRunResult, AuditTrail, ReportArtifact
-from core.llm_analysis.artifacts.v08_artifacts import build_artifacts_bundle
+from core.llm_analysis.artifacts.v08_artifacts import build_artifacts_bundle as build_artifacts_bundle_v080
+from core.llm_analysis.artifacts.v081_artifacts import build_artifacts_bundle as build_artifacts_bundle_v081
 from core.llm_analysis.tools.extract_tool import tool_extract_facts_rule_based
 from core.llm_analysis.tools.plan_tool import tool_build_query_plan
 from core.llm_analysis.tools.report_tool import tool_generate_report_md
@@ -296,8 +297,11 @@ class FixedPipelineOrchestrator:
         }
 
         # v0.8.0: structured artifacts (append-only)
+        # Select artifacts builder by schema_version (keep deterministic, backward compatible)
+        schema_v = (cfg.schema_version or "0.8.0").strip()
+        _build_artifacts = build_artifacts_bundle_v081 if schema_v.startswith("0.8.1") else build_artifacts_bundle_v080
         try:
-            audit_obj["artifacts"] = build_artifacts_bundle(
+            audit_obj["artifacts"] = _build_artifacts(
                 sources=sources,
                 snippets=snippets,
                 queries_tagged=queries_tagged,

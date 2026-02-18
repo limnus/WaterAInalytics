@@ -150,7 +150,19 @@ def render_agentic_analysis(role: str | None = None) -> None:
             "sources": result.audit.sources_summary,
         })
 
-        # v0.8.0 artifacts (best-effort)
+        # v0.8.1 artifacts (best-effort)
         if getattr(result.audit, "artifacts", None):
-            with st.expander("v0.8.0 Artifacts (Evidence / Claims / Narrative)", expanded=False):
+            with st.expander("v0.8.1 Artifacts (Evidence / Claims / Narrative)", expanded=False):
                 st.json(result.audit.artifacts)
+
+                # v0.8.1: show templated report (parallel) if available
+                try:
+                    nar = (result.audit.artifacts or {}).get("narrative") or {}
+                    tmd = nar.get("templated_markdown")
+                    if tmd:
+                        st.markdown("---")
+                        st.markdown("**Templated report (v0.8.1)**")
+                        st.code(tmd, language="markdown")
+                except Exception:
+                    pass
+

@@ -1,0 +1,141 @@
+{
+  "aggregate": {
+    "claim_type_counts": {
+      "data_source": 2,
+      "station_metadata": 2
+    },
+    "missing_artifacts_cases": 6,
+    "n_cases": 8,
+    "n_claims": 4,
+    "n_evidence": 15,
+    "n_sources": 67,
+    "quality_flag_counts": {
+      "no_published_date": 7,
+      "truncated_content": 1
+    },
+    "uncertainty_counts": {
+      "MED": 4
+    },
+    "unsupported_claims": 0
+  },
+  "cases": [
+    {
+      "case_id": "47a72e36-5819-4753-9b1c-2776aef42826",
+      "claim_type_counts": {},
+      "missing_artifacts": true,
+      "n_claims": 0,
+      "n_evidence": 0,
+      "n_sources": 8,
+      "quality_flag_counts": {},
+      "run_id": "47a72e36-5819-4753-9b1c-2776aef42826",
+      "schema_version": "0.7.0",
+      "uncertainty_counts": {},
+      "unsupported_claims": 0
+    },
+    {
+      "case_id": "b0bb267d-c1a0-4f48-a025-ca32f1f19009",
+      "claim_type_counts": {
+        "data_source": 1,
+        "station_metadata": 1
+      },
+      "missing_artifacts": false,
+      "n_claims": 2,
+      "n_evidence": 7,
+      "n_sources": 7,
+      "quality_flag_counts": {
+        "no_published_date": 7,
+        "truncated_content": 1
+      },
+      "run_id": "b0bb267d-c1a0-4f48-a025-ca32f1f19009",
+      "schema_version": "0.8.1",
+      "uncertainty_counts": {
+        "MED": 2
+      },
+      "unsupported_claims": 0
+    },
+    {
+      "case_id": "0aab851f-6917-4e26-9f27-21939fad91b8",
+      "claim_type_counts": {},
+      "missing_artifacts": true,
+      "n_claims": 0,
+      "n_evidence": 0,
+      "n_sources": 8,
+      "quality_flag_counts": {},
+      "run_id": "0aab851f-6917-4e26-9f27-21939fad91b8",
+      "schema_version": "0.7.0",
+      "uncertainty_counts": {},
+      "unsupported_claims": 0
+    },
+    {
+      "case_id": "e5f9ca72-a86a-471a-a27e-47521ef7ae59",
+      "claim_type_counts": {},
+      "missing_artifacts": true,
+      "n_claims": 0,
+      "n_evidence": 0,
+      "n_sources": 10,
+      "quality_flag_counts": {},
+      "run_id": "e5f9ca72-a86a-471a-a27e-47521ef7ae59",
+      "schema_version": "0.7.0",
+      "uncertainty_counts": {},
+      "unsupported_claims": 0
+    },
+    {
+      "case_id": "47c29725-53c2-4c87-8a20-f96a12be0e20",
+      "claim_type_counts": {
+        "data_source": 1,
+        "station_metadata": 1
+      },
+      "missing_artifacts": false,
+      "n_claims": 2,
+      "n_evidence": 8,
+      "n_sources": 8,
+      "quality_flag_counts": {},
+      "run_id": "47c29725-53c2-4c87-8a20-f96a12be0e20",
+      "schema_version": "0.8.0",
+      "uncertainty_counts": {
+        "MED": 2
+      },
+      "unsupported_claims": 0
+    },
+    {
+      "case_id": "f7faaaf4-6a76-4a63-bc18-c83ff977aa5d",
+      "claim_type_counts": {},
+      "missing_artifacts": true,
+      "n_claims": 0,
+      "n_evidence": 0,
+      "n_sources": 16,
+      "quality_flag_counts": {},
+      "run_id": "f7faaaf4-6a76-4a63-bc18-c83ff977aa5d",
+      "schema_version": "0.7.0",
+      "uncertainty_counts": {},
+      "unsupported_claims": 0
+    },
+    {
+      "case_id": "50afa2e7-35cc-40b3-8498-723a0d72923b",
+      "claim_type_counts": {},
+      "missing_artifacts": true,
+      "n_claims": 0,
+      "n_evidence": 0,
+      "n_sources": 4,
+      "quality_flag_counts": {},
+      "run_id": "50afa2e7-35cc-40b3-8498-723a0d72923b",
+      "schema_version": "0.7.0",
+      "uncertainty_counts": {},
+      "unsupported_claims": 0
+    },
+    {
+      "case_id": "2e1721ab-71bd-4ded-8f6b-ffe4ccf87f72",
+      "claim_type_counts": {},
+      "missing_artifacts": true,
+      "n_claims": 0,
+      "n_evidence": 0,
+      "n_sources": 6,
+      "quality_flag_counts": {},
+      "run_id": "2e1721ab-71bd-4ded-8f6b-ffe4ccf87f72",
+      "schema_version": "0.7.0",
+      "uncertainty_counts": {},
+      "unsupported_claims": 0
+    }
+  ],
+  "n_cases": 8
+}

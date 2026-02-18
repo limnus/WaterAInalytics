@@ -1,0 +1,9 @@
+{
+  "cases": [
+    {
+      "case_id": "example_usgs_02430005",
+      "run_json": "C:/Users/limnu/AppData/Local/Temp/agentic_analysis/USGS-02430005/Value/2026-02-18/1e3f99d89bb1fbfec6eaa77c557e926f7796220da639cee75bf848b46e7115d9/run.json",
+      "expected_claim_types": ["station_metadata", "data_source"]
+    }
+  ]
+}

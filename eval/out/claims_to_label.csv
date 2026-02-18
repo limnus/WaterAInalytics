@@ -1,0 +1,5 @@
+case_id,run_id,schema_version,claim_id,claim_type,uncertainty_level,support_score,title,text,evidence_count,quality_flags,label,reason
+b0bb267d-c1a0-4f48-a025-ca32f1f19009,b0bb267d-c1a0-4f48-a025-ca32f1f19009,0.8.1,cl_200f9f0d83e1,data_source,MED,0.7,USGS NWIS monitoring page,USGS NWIS provides time series data and station metadata for USGS-02430005.,3,no_published_date,,
+b0bb267d-c1a0-4f48-a025-ca32f1f19009,b0bb267d-c1a0-4f48-a025-ca32f1f19009,0.8.1,cl_87a31e7dea66,station_metadata,MED,0.7,Station metadata and monitoring context,Station metadata (location/site info) helps interpret short-term changes at USGS-02430005.,3,no_published_date,,
+47c29725-53c2-4c87-8a20-f96a12be0e20,47c29725-53c2-4c87-8a20-f96a12be0e20,0.8.0,cl_a63e4aa3881a,data_source,MED,0.7,USGS NWIS monitoring page,USGS NWIS provides time series data and station metadata for USGS-02430005.,3,,,
+47c29725-53c2-4c87-8a20-f96a12be0e20,47c29725-53c2-4c87-8a20-f96a12be0e20,0.8.0,cl_037fa6a4df02,station_metadata,MED,0.7,Station metadata and monitoring context,Station metadata (location/site info) helps interpret short-term changes at USGS-02430005.,3,,,
