@@ -41,6 +41,9 @@ class AuditTrail:
 
     sources_summary: Optional[List[Dict[str, Any]]] = None
 
+    # v0.8.0 structured artifacts (append-only in run.json)
+    artifacts: Optional[Dict[str, Any]] = None
+
 
 @dataclass(frozen=True)
 class AnalysisRunResult:

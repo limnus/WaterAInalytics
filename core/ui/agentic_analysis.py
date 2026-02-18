@@ -139,13 +139,18 @@ def render_agentic_analysis(role: str | None = None) -> None:
 
         st.markdown("### Audit Info")
         st.json({
-    "run_id": result.audit.run_id,
-    "schema_version": result.audit.schema_version,
-    "mode": result.audit.mode,
-    "budgets": result.audit.budgets,
-    "timing_ms": result.audit.timing_ms,
-    "warnings": result.audit.warnings,
-    "llm": result.audit.llm,
-    "queries": result.audit.queries,
-    "sources": result.audit.sources_summary,
-})
+            "run_id": result.audit.run_id,
+            "schema_version": result.audit.schema_version,
+            "mode": result.audit.mode,
+            "budgets": result.audit.budgets,
+            "timing_ms": result.audit.timing_ms,
+            "warnings": result.audit.warnings,
+            "llm": result.audit.llm,
+            "queries": result.audit.queries,
+            "sources": result.audit.sources_summary,
+        })
+
+        # v0.8.0 artifacts (best-effort)
+        if getattr(result.audit, "artifacts", None):
+            with st.expander("v0.8.0 Artifacts (Evidence / Claims / Narrative)", expanded=False):
+                st.json(result.audit.artifacts)

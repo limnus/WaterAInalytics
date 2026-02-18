@@ -12,6 +12,7 @@ from core.llm_analysis.config import AnalysisConfig
 from core.llm_analysis.extraction.models import FactBundle, FactEvidence, FactItem
 from core.llm_analysis.forecast_integration.models import ForecastContext
 from core.llm_analysis.models import AnalysisRunResult, AuditTrail, ReportArtifact
+from core.llm_analysis.artifacts.v08_artifacts import build_artifacts_bundle
 from core.llm_analysis.tools.extract_tool import tool_extract_facts_rule_based
 from core.llm_analysis.tools.plan_tool import tool_build_query_plan
 from core.llm_analysis.tools.report_tool import tool_generate_report_md
@@ -137,6 +138,21 @@ class FixedPipelineOrchestrator:
                 sources_bibliography=[],
             )
 
+            # v0.8.0: structured artifacts (best-effort). Do not mutate cache on read.
+            artifacts = audit_obj.get("artifacts")
+            if artifacts is None:
+                try:
+                    artifacts = build_artifacts_bundle(
+                        sources=sources,
+                        snippets=snippets,
+                        queries_tagged=audit_obj.get("queries_tagged"),
+                        facts=facts,
+                        report_md=report.content,
+                        evidence_dir=evidence_dir if evidence_dir.exists() else None,
+                    )
+                except Exception:
+                    artifacts = None
+
             return AnalysisRunResult(
                 cache_key=cache_key,
                 created_at_utc=audit_obj.get("created_at_utc", forecast_ctx.run_datetime_utc.isoformat()),
@@ -158,6 +174,7 @@ class FixedPipelineOrchestrator:
                     queries=audit_obj.get("queries"),
                     queries_tagged=audit_obj.get("queries_tagged"),
                     sources_summary=audit_obj.get("sources_summary"),
+                    artifacts=artifacts,
                 ),
             )
 
@@ -278,6 +295,20 @@ class FixedPipelineOrchestrator:
             "sources_summary": sources_summary,
         }
 
+        # v0.8.0: structured artifacts (append-only)
+        try:
+            audit_obj["artifacts"] = build_artifacts_bundle(
+                sources=sources,
+                snippets=snippets,
+                queries_tagged=queries_tagged,
+                facts=facts,
+                report_md=report.content,
+                evidence_dir=evidence_dir if evidence_dir.exists() else None,
+            )
+        except Exception:
+            warnings.append("artifacts_build_failed")
+            audit_obj["artifacts"] = None
+
         # v0.7.x: persist richer run.json; keep audit.json for backward compatibility
         save_json(run_path, audit_obj)
         save_json(audit_path, audit_obj)
@@ -303,5 +334,6 @@ class FixedPipelineOrchestrator:
                 queries=list(query_plan.queries),
                 queries_tagged=queries_tagged,
                 sources_summary=sources_summary,
+                artifacts=audit_obj.get("artifacts"),
             ),
         )

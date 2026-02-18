@@ -8,7 +8,6 @@ import streamlit as st
 
 from core.cache.get_station_timeseries import (
     _site_from_monitoring_location_id,
-    ensure_iv_window,
     ALL_PARAMETERS,
 )
 from core.ui.strings.loader import get_strings
@@ -54,6 +53,81 @@ def _load_all_monitoring_ids() -> list[str]:
     return out
 
 
+def _load_cached_sites(out_root: str = "iv_cache") -> list[str]:
+    """Return USGS site_no values that already have IV cache on disk.
+
+    This intentionally *does not* consult the stations CSV, because that file
+    represents a candidate universe and can be much larger than what has been
+    cached. Admin training should not trigger new downloads by default.
+    """
+    base = _project_root() / out_root
+    if not base.exists() or not base.is_dir():
+        return []
+    sites: list[str] = []
+    for p in sorted(base.iterdir()):
+        if p.is_dir() and p.name.isdigit():
+            sites.append(p.name)
+    return sites
+
+
+def _read_iv_window_cached(
+    *,
+    site: str,
+    parameter_code: str,
+    days: int,
+    out_root: str = "iv_cache",
+) -> pd.DataFrame:
+    """Read IV cache for a window *without downloading missing days*.
+
+    Mirrors the read path of ensure_iv_window(), but never performs network IO.
+    """
+    from datetime import datetime, timedelta
+
+    if days <= 0:
+        raise ValueError("days must be a positive integer")
+
+    today_utc = datetime.utcnow().date()
+    window_dates = [today_utc - timedelta(days=i) for i in range(days)]
+
+    base_dir = _project_root() / out_root / site / str(parameter_code)
+    frames: list[pd.DataFrame] = []
+
+    for d in window_dates:
+        path = base_dir / f"{d.isoformat()}.parquet"
+        if not path.exists():
+            continue
+        try:
+            df_day = pd.read_parquet(path)
+        except Exception:
+            continue
+
+        if "site_no" not in df_day.columns:
+            df_day["site_no"] = site
+        if "parameter_code" not in df_day.columns:
+            df_day["parameter_code"] = str(parameter_code)
+        if "unit" not in df_day.columns:
+            df_day["unit"] = None
+
+        if "datetime_utc" in df_day.columns:
+            df_day["datetime_utc"] = pd.to_datetime(df_day["datetime_utc"], utc=True, errors="coerce")
+        elif "datetime" in df_day.columns:
+            df_day["datetime_utc"] = pd.to_datetime(df_day["datetime"], utc=True, errors="coerce")
+        else:
+            continue
+
+        if "date_utc" not in df_day.columns:
+            df_day["date_utc"] = df_day["datetime_utc"].dt.date.astype(str)
+
+        frames.append(df_day)
+
+    if not frames:
+        return pd.DataFrame(columns=["site_no", "parameter_code", "unit", "datetime_utc", "value", "date_utc"])
+
+    df_out = pd.concat(frames, ignore_index=True)
+    df_out = df_out.sort_values("datetime_utc").reset_index(drop=True)
+    return df_out
+
+
 def render_admin_models(role: str | None = None) -> None:
     S = get_strings()
     st.markdown("### Admin Models")
@@ -67,6 +141,17 @@ def render_admin_models(role: str | None = None) -> None:
     st.markdown("#### Ridge")
     days = st.slider("Training window (days)", min_value=7, max_value=90, value=30, step=1)
     min_points = st.number_input("Minimum points required", min_value=48, max_value=2000, value=200, step=10)
+
+    st.markdown("**Data sourcing**")
+    st.caption(
+        "By default, training uses only the existing IV cache on disk and will not download new data. "
+        "Enable the option below only if you explicitly want to fetch missing days/sites."
+    )
+    allow_downloads = st.checkbox(
+        "Allow downloads for missing cache (may fetch many stations)",
+        value=False,
+        help="If disabled, only stations already present under iv_cache/ will be trained.",
+    )
 
     st.markdown("**Ridge alpha**")
     auto_alpha = st.checkbox("Auto-tune alpha (grid search, Admin only)", value=True)
@@ -127,10 +212,20 @@ def render_admin_models(role: str | None = None) -> None:
         st.info("Configure options and click **Train models for ALL stations with data**.")
         return
 
-    mids = _load_all_monitoring_ids()
-    if not mids:
-        st.error("Stations CSV not found or empty. Refresh stations in Explorer first.")
-        return
+    # Station selection:
+    # - default: only stations that already have IV cache
+    # - optional: fall back to the stations CSV universe (may trigger downloads)
+    if allow_downloads:
+        mids = _load_all_monitoring_ids()
+        if not mids:
+            st.error("Stations CSV not found or empty. Refresh stations in Explorer first.")
+            return
+        sites = [_site_from_monitoring_location_id(mid) for mid in mids]
+    else:
+        sites = _load_cached_sites(out_root="iv_cache")
+        if not sites:
+            st.error("No cached stations found under iv_cache/. Use Explorer first to cache at least one station.")
+            return
 
     if chronos_enable:
         try:
@@ -155,7 +250,7 @@ def render_admin_models(role: str | None = None) -> None:
             return "amazon/chronos-bolt-base", "chronos-base"
         return "amazon/chronos-t5-large", "chronos-large"
 
-    total = len(mids) * max(1, len(params))
+    total = len(sites) * max(1, len(params))
     prog = st.progress(0)
     log = st.empty()
 
@@ -165,12 +260,17 @@ def render_admin_models(role: str | None = None) -> None:
     skipped = 0
     errors = 0
 
-    for mid in mids:
-        site = _site_from_monitoring_location_id(mid)
+    for site in sites:
         for pcode in params:
             done += 1
             try:
-                df = ensure_iv_window(site=site, parameter_code=pcode, days=int(days))
+                if allow_downloads:
+                    # Import locally to avoid accidentally pulling requests into paths that don't need it.
+                    from core.cache.get_station_timeseries import ensure_iv_window
+
+                    df = ensure_iv_window(site=site, parameter_code=pcode, days=int(days))
+                else:
+                    df = _read_iv_window_cached(site=site, parameter_code=pcode, days=int(days), out_root="iv_cache")
                 if df is None or df.empty or len(df) < int(min_points):
                     skipped += 1
                     continue
@@ -213,7 +313,7 @@ def render_admin_models(role: str | None = None) -> None:
 
             except Exception as e:
                 errors += 1
-                log.warning(f"Error training for {mid} / {pcode}: {e}")
+                log.warning(f"Error training for USGS-{site} / {pcode}: {e}")
 
             prog.progress(min(1.0, done / max(1, total)))
 

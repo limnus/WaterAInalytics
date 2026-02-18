@@ -45,7 +45,8 @@ class AnalysisConfig:
     page_policy: PagePolicy = PagePolicy(max_pages=10)
     report_style: ReportStyle = ReportStyle()
 
-    schema_version: str = "0.7.0"
+    # v0.8.0: adds structured artifacts (evidence/claims/narrative) to run.json (append-only)
+    schema_version: str = "0.8.0"
 
     # Optional knobs; keep small in v0.6.0
     collector_opts: Optional[Dict[str, str]] = None
