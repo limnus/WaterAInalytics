@@ -26,19 +26,18 @@ def build_system_prompt() -> str:
 
 
 def required_output_schema_hint() -> str:
-    """A compact schema description to steer JSON output.
+    """A compact schema description to steer JSON output (v0.9.1).
 
     Keep it deterministic: fixed keys, simple types.
     """
 
     return (
-        "Output JSON schema: {"
-        "\n  'summary': str,"
-        "\n  'key_findings': [ {'text': str, 'claim_ids': [str], 'evidence_ids': [str], 'confidence': 'LOW|MED|HIGH'} ],"
-        "\n  'forecast_interpretation': str,"
-        "\n  'limitations': [str],"
-        "\n  'recommended_next_steps': [str],"
-        "\n  'open_questions': [str]"
+        "Output JSON schema (v0.9.1): {"
+        "\n  'executive_summary': str,"
+        "\n  'key_findings': [ {'id': str, 'text': str, 'claim_ids': [str], 'evidence_ids': [str], 'confidence': 'LOW|MED|HIGH'} ],"
+        "\n  'forecast_interpretation': [ {'id': str, 'text': str, 'claim_ids': [str], 'evidence_ids': [str], 'confidence': 'LOW|MED|HIGH'} ],"
+        "\n  'limitations': [ {'id': str, 'text': str, 'claim_ids': [str], 'evidence_ids': [str]} ],"
+        "\n  'open_questions': [ {'id': str, 'text': str} ]"
         "\n}"
     )
 

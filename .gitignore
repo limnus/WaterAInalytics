@@ -30,3 +30,8 @@ Thumbs.db
 
 # USGS IV cache
 iv_cache/
+
+eval/out/
+eval/evaluation_cases.json
+
+*.csv

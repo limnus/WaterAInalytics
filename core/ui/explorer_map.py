@@ -218,6 +218,8 @@ def _selection_ui(df_all: pd.DataFrame, df_filtered: pd.DataFrame) -> None:
     # ---------------------------------
     # Add station (from current filters) — show first
     # ---------------------------------
+    st.subheader("Add station from current filters")
+    
     c1, c2, c3 = st.columns([2, 1, 1])
 
     with c1:
@@ -234,9 +236,10 @@ def _selection_ui(df_all: pd.DataFrame, df_filtered: pd.DataFrame) -> None:
 
         options = ["(None)"] + df_candidates["label"].tolist()
         choice = st.selectbox(
-            "Add station from current filters",
+            ".",
             options=options,
             key="expl_add_choice",
+            label_visibility="collapsed",
         )
 
     with c2:

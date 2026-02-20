@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from dataclasses import asdict
+import re
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, Optional
@@ -13,6 +13,9 @@ from .models import LLMConfig, LLMReport
 from .prompts import build_system_prompt, required_output_schema_hint, build_user_message, prompt_hash_inputs
 from .providers import ollama_chat_json, openai_chat_json
 from .utils import sha256_json, sha256_text, safe_json_dumps, clamp_text
+from .validator import validate_llm_report
+from .renderer import render_markdown
+from .deterministic_report import build_deterministic_llm_report
 
 
 def _utc_now_iso() -> str:
@@ -52,10 +55,6 @@ def _forecast_summary(fc: ForecastContext) -> Dict[str, Any]:
 def _build_llm_payload(run_obj: Dict[str, Any], forecast_ctx: ForecastContext) -> Dict[str, Any]:
     artifacts = (run_obj.get("artifacts") or {})
 
-    # Keep only structured, methodology-relevant signals (no raw HTML)
-    # Backward/variant compatibility:
-    #   - v0.8.x may store evidence/claims as either a dict wrapper (with 'sources'/'items')
-    #     or directly as a list.
     def _as_list(x: Any, *, wrapped_key: str) -> list:
         if x is None:
             return []
@@ -96,6 +95,7 @@ def _build_llm_payload(run_obj: Dict[str, Any], forecast_ctx: ForecastContext) -
                     "quality_flags": s.get("quality_flags") or [],
                 }
                 for s in evidence
+                if isinstance(s, dict)
             ],
         },
         "claims": {
@@ -110,6 +110,7 @@ def _build_llm_payload(run_obj: Dict[str, Any], forecast_ctx: ForecastContext) -
                     "score_breakdown": c.get("score_breakdown") or {},
                 }
                 for c in claims
+                if isinstance(c, dict)
             ],
         },
         "narrative": {
@@ -119,16 +120,80 @@ def _build_llm_payload(run_obj: Dict[str, Any], forecast_ctx: ForecastContext) -
     return payload
 
 
-def _validate_output(obj: Dict[str, Any]) -> Dict[str, Any]:
-    # Ensure required keys exist (best-effort). Keep deterministic.
-    out = dict(obj or {})
-    out.setdefault("summary", "")
+def _normalize_v091(out_obj: Dict[str, Any]) -> Dict[str, Any]:
+    out = dict(out_obj or {})
+    if "executive_summary" not in out and "summary" in out:
+        out["executive_summary"] = out.get("summary") or ""
+
+    out.setdefault("executive_summary", "")
     out.setdefault("key_findings", [])
-    out.setdefault("forecast_interpretation", "")
+    out.setdefault("forecast_interpretation", [])
     out.setdefault("limitations", [])
-    out.setdefault("recommended_next_steps", [])
     out.setdefault("open_questions", [])
+
+    def _ensure_ids(items, prefix):
+        out_items = []
+        for i, it in enumerate(items or []):
+            if not isinstance(it, dict):
+                continue
+            it = dict(it)
+            it.setdefault("id", f"{prefix}_{i+1:03d}")
+            it.setdefault("text", "")
+            it.setdefault("claim_ids", [])
+            it.setdefault("evidence_ids", [])
+            if prefix in ("kf", "fi"):
+                it.setdefault("confidence", "LOW")
+            out_items.append(it)
+        return out_items
+
+    out["key_findings"] = _ensure_ids(out.get("key_findings"), "kf")
+    out["forecast_interpretation"] = _ensure_ids(out.get("forecast_interpretation"), "fi")
+    out["limitations"] = _ensure_ids(out.get("limitations"), "lim")
+
+    oq2 = []
+    for i, it in enumerate(out.get("open_questions") or []):
+        if not isinstance(it, dict):
+            continue
+        it = dict(it)
+        it.setdefault("id", f"q_{i+1:03d}")
+        it.setdefault("text", "")
+        oq2.append(it)
+    out["open_questions"] = oq2
+
     return out
+
+
+def _canon_one(s: str, *, kind: str) -> str:
+    s = s.strip()
+    if kind == "ev":
+        m = re.match(r"^ev_([0-9a-f]{11})$", s)
+        if m:
+            return "ev_0" + m.group(1)
+    if kind == "cl":
+        m = re.match(r"^cl_([0-9a-f]{11})$", s)
+        if m:
+            return "cl_0" + m.group(1)
+    return s
+
+
+def _canon_id_list(ids: Any, *, kind: str) -> list[str]:
+    out: list[str] = []
+    if not isinstance(ids, list):
+        return out
+    for x in ids:
+        if isinstance(x, str):
+            out.append(_canon_one(x, kind=kind))
+    return out
+
+
+def _normalize_ids_in_report(report: Dict[str, Any]) -> None:
+    for sec in ("key_findings", "forecast_interpretation", "limitations"):
+        items = report.get(sec) or []
+        for it in items:
+            if not isinstance(it, dict):
+                continue
+            it["claim_ids"] = _canon_id_list(it.get("claim_ids") or [], kind="cl")
+            it["evidence_ids"] = _canon_id_list(it.get("evidence_ids") or [], kind="ev")
 
 
 def run_llm_analyst(
@@ -138,15 +203,7 @@ def run_llm_analyst(
     llm_cfg: LLMConfig,
     user_question: Optional[str] = None,
 ) -> LLMReport:
-    """Run the optional LLM Analyst and append results to run.json.
-
-    - Read-only w.r.t. pipeline artifacts (evidence/claims/narrative).
-    - Appends `artifacts.llm_report` and updates top-level `llm` audit block.
-    """
-
-    if llm_cfg.provider == "off":
-        raise ValueError("LLM provider is OFF")
-    if not llm_cfg.model:
+    if llm_cfg.provider != "off" and (not llm_cfg.model):
         raise ValueError("LLM model is required")
 
     run_obj = load_json(run_path) or {}
@@ -162,127 +219,141 @@ def run_llm_analyst(
 
     warnings: list[str] = []
 
-    # Call provider
-    if llm_cfg.provider == "ollama":
-        out_obj = ollama_chat_json(
-            base_url=llm_cfg.ollama_base_url,
-            model=llm_cfg.model,
-            system=system,
-            user=user_msg,
-            schema_hint=schema_hint,
-            temperature=0.0,
+    # ---------------------------------------------------------
+    # Provider dispatch (single source of truth)
+    # ---------------------------------------------------------
+
+    if llm_cfg.provider == "off":
+        # Deterministic analyst (no external LLM call)
+        from .deterministic_report import build_deterministic_llm_report
+
+        artifacts = (run_obj.get("artifacts") or {})
+
+        # claims
+        claims_obj = artifacts.get("claims")
+        if isinstance(claims_obj, dict):
+            claims = claims_obj.get("items") or []
+        elif isinstance(claims_obj, list):
+            claims = claims_obj
+        else:
+            claims = []
+
+        # evidence
+        evidence_obj = artifacts.get("evidence")
+        if isinstance(evidence_obj, dict):
+            evidence = evidence_obj.get("sources") or []
+        elif isinstance(evidence_obj, list):
+            evidence = evidence_obj
+        else:
+            evidence = []
+
+        # context consistency
+        context_consistency = artifacts.get("context_consistency")
+        if not isinstance(context_consistency, dict):
+            context_consistency = None
+
+        report_obj = build_deterministic_llm_report(
+            forecast_ctx=forecast_ctx,
+            claims=[c for c in claims if isinstance(c, dict)],
+            evidence=[e for e in evidence if isinstance(e, dict)],
+            context_consistency=context_consistency,
+            user_question=user_question,
         )
-    elif llm_cfg.provider == "openai":
-        if not llm_cfg.openai_api_key:
-            raise ValueError("OPENAI_API_KEY missing")
-        out_obj = openai_chat_json(
-            base_url=llm_cfg.openai_base_url,
-            api_key=llm_cfg.openai_api_key,
-            model=llm_cfg.model,
-            system=system,
-            user=user_msg,
-            schema_hint=schema_hint,
-            temperature=0.0,
-        )
+
+        provider_used = "off"
+        model_used = "deterministic"
+
     else:
-        raise ValueError(f"Unsupported provider: {llm_cfg.provider}")
+        # External LLM call (Ollama / OpenAI)
+        if llm_cfg.provider == "ollama":
+            report_obj = ollama_chat_json(
+                base_url=llm_cfg.ollama_base_url,
+                model=llm_cfg.model,
+                system=system,
+                user=user_msg,
+                schema_hint=schema_hint,
+                temperature=0.0,
+            )
 
-    out_obj = _validate_output(out_obj)
+        elif llm_cfg.provider == "openai":
+            if not llm_cfg.openai_api_key:
+                raise ValueError("OPENAI_API_KEY missing")
 
-    # Produce a stable markdown surface (derived deterministically from JSON)
-    # Keep this simple; do not depend on LLM formatting.
-    md_lines = []
-    if out_obj.get("summary"):
-        md_lines.append("## LLM Analyst Summary")
-        md_lines.append(out_obj.get("summary", ""))
-        md_lines.append("")
+            report_obj = openai_chat_json(
+                base_url=llm_cfg.openai_base_url,
+                api_key=llm_cfg.openai_api_key,
+                model=llm_cfg.model,
+                system=system,
+                user=user_msg,
+                schema_hint=schema_hint,
+                temperature=0.0,
+            )
 
-    kf = out_obj.get("key_findings") or []
-    if kf:
-        md_lines.append("## Key Findings")
-        for item in kf:
-            txt = (item or {}).get("text", "").strip()
-            cids = (item or {}).get("claim_ids") or []
-            eids = (item or {}).get("evidence_ids") or []
-            conf = (item or {}).get("confidence")
-            cite = []
-            if cids:
-                cite.append("claims: " + ", ".join(cids))
-            if eids:
-                cite.append("evidence: " + ", ".join(eids))
-            if conf:
-                cite.append(f"confidence: {conf}")
-            suffix = f" ({' | '.join(cite)})" if cite else ""
-            if txt:
-                md_lines.append(f"- {txt}{suffix}")
-        md_lines.append("")
+        else:
+            raise ValueError(f"Unsupported provider: {llm_cfg.provider}")
 
-    if out_obj.get("forecast_interpretation"):
-        md_lines.append("## Forecast Interpretation")
-        md_lines.append(out_obj.get("forecast_interpretation", ""))
-        md_lines.append("")
+        provider_used = llm_cfg.provider
+        model_used = llm_cfg.model
+        
+    # Normalize to v0.9.1 shape (works for deterministic too)
+    out_obj = _normalize_v091(report_obj)
 
-    lim = out_obj.get("limitations") or []
-    if lim:
-        md_lines.append("## Limitations")
-        for s in lim:
-            if str(s).strip():
-                md_lines.append(f"- {str(s).strip()}")
-        md_lines.append("")
-
-    rec = out_obj.get("recommended_next_steps") or []
-    if rec:
-        md_lines.append("## Recommended Next Steps")
-        for s in rec:
-            if str(s).strip():
-                md_lines.append(f"- {str(s).strip()}")
-        md_lines.append("")
-
-    oq = out_obj.get("open_questions") or []
-    if oq:
-        md_lines.append("## Open Questions")
-        for s in oq:
-            if str(s).strip():
-                md_lines.append(f"- {str(s).strip()}")
-        md_lines.append("")
-
-    output_markdown = "\n".join(md_lines).strip() + "\n"
-    output_markdown = clamp_text(output_markdown, llm_cfg.max_output_chars)
-
-    rep = LLMReport(
-        schema_version="0.9.0",
-        provider=llm_cfg.provider,
-        model=llm_cfg.model,
-        created_at_utc=_utc_now_iso(),
-        input_hash=input_hash,
-        prompt_hashes=prompt_hashes,
-        output_json=out_obj,
-        output_markdown=output_markdown,
-        warnings=warnings,
-    )
-
-    # Append to run.json (audit-friendly)
-    artifacts = run_obj.get("artifacts") or {}
-    artifacts["llm_report"] = {
-        **asdict(rep),
-        # keep output_markdown manageable (already clamped)
+    report = {
+        "llm_report_schema": "0.9.1",
+        "provider": provider_used,
+        "model": model_used,
+        "created_at_utc": _utc_now_iso(),
+        "input_hash": input_hash,
+        "prompt_hashes": prompt_hashes,
+        "executive_summary": clamp_text(out_obj.get("executive_summary", ""), llm_cfg.max_output_chars),
+        "key_findings": out_obj.get("key_findings") or [],
+        "forecast_interpretation": out_obj.get("forecast_interpretation") or [],
+        "limitations": out_obj.get("limitations") or [],
+        "open_questions": out_obj.get("open_questions") or [],
     }
-    run_obj["artifacts"] = artifacts
 
-    # Update top-level llm audit block (without deleting older fields)
-    llm_block = run_obj.get("llm") or {}
-    llm_block.update(
-        {
-            "provider": llm_cfg.provider,
-            "model": llm_cfg.model,
-            "temperature": 0.0,
-            "input_hash": input_hash,
-            "prompt_hashes": prompt_hashes,
-            "created_at_utc": rep.created_at_utc,
-        }
+    _normalize_ids_in_report(report)
+
+    artifacts = (run_obj.get("artifacts") or {})
+    claims = artifacts.get("claims")
+    evidence = artifacts.get("evidence")
+
+    claims_list = (claims.get("items") if isinstance(claims, dict) else claims) or []
+    evidence_list = (evidence.get("sources") if isinstance(evidence, dict) else evidence) or []
+
+    report["validation"] = validate_llm_report(
+        report,
+        claims=[c for c in claims_list if isinstance(c, dict)],
+        evidence=[e for e in evidence_list if isinstance(e, dict)],
     )
-    run_obj["llm"] = llm_block
+
+    report["rendered_markdown"] = render_markdown(report)
+
+    artifacts2 = dict(artifacts)
+    artifacts2["llm_report"] = report
+    run_obj["artifacts"] = artifacts2
+
+    run_obj["llm"] = {
+        "enabled": True,
+        "provider": provider_used,
+        "model": model_used,
+        "created_at_utc": report["created_at_utc"],
+        "input_hash": input_hash,
+        "prompt_hashes": prompt_hashes,
+        "schema": "0.9.1",
+        "warnings": warnings,
+    }
 
     save_json(run_path, run_obj)
 
-    return rep
+    return LLMReport(
+        schema_version="0.9.1",
+        provider=provider_used,
+        model=model_used,
+        created_at_utc=report["created_at_utc"],
+        input_hash=input_hash,
+        prompt_hashes=prompt_hashes,
+        output_json=report,
+        output_markdown=report["rendered_markdown"],
+        warnings=warnings,
+    )

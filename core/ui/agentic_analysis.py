@@ -282,7 +282,7 @@ def render_agentic_analysis(role: str | None = None) -> None:
         elif not Path(run_path_s).exists():
             st.warning(f"run.json not found at: {run_path_s}")
 
-    if st.button("Run LLM Analyst", disabled=(provider == "off")):
+    if st.button("Run LLM Analyst", key="run_llm_analyst_btn"):
         run_path2 = Path(run_path_s) if run_path_s else None
         if not run_path2 or not run_path2.exists():
             st.error("Cannot run LLM Analyst: run.json path is missing.")

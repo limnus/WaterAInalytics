@@ -12,6 +12,7 @@ from core.llm_analysis.config import AnalysisConfig
 from core.llm_analysis.extraction.models import FactBundle, FactEvidence, FactItem
 from core.llm_analysis.forecast_integration.models import ForecastContext
 from core.llm_analysis.models import AnalysisRunResult, AuditTrail, ReportArtifact
+from core.llm_analysis.context_consistency import compute_context_consistency
 from core.llm_analysis.artifacts.v08_artifacts import build_artifacts_bundle as build_artifacts_bundle_v080
 from core.llm_analysis.artifacts.v081_artifacts import build_artifacts_bundle as build_artifacts_bundle_v081
 from core.llm_analysis.tools.extract_tool import tool_extract_facts_rule_based
@@ -313,7 +314,17 @@ class FixedPipelineOrchestrator:
             warnings.append("artifacts_build_failed")
             audit_obj["artifacts"] = None
 
-        # v0.7.x: persist richer run.json; keep audit.json for backward compatibility
+        
+        # v0.9.1: Context Consistency Engine (CCE) - deterministic index for UX/paper
+        try:
+            if isinstance(audit_obj.get("artifacts"), dict):
+                audit_obj["artifacts"]["context_consistency"] = compute_context_consistency(
+                    artifacts=audit_obj.get("artifacts"),
+                    forecast_ctx=forecast_ctx,
+                )
+        except Exception:
+            warnings.append("context_consistency_failed")
+# v0.7.x: persist richer run.json; keep audit.json for backward compatibility
         save_json(run_path, audit_obj)
         save_json(audit_path, audit_obj)
 
