@@ -15,6 +15,40 @@ from core.forecast_models.pi import gaussian_residual_pi
 from core.forecast_models.registry import create_model
 from core.forecast_models.paths import model_dir
 
+from core.cache.get_station_timeseries import (
+    _site_from_monitoring_location_id,
+    ensure_iv_window,
+    PCODE_FLOW,
+    PCODE_STAGE,
+)
+
+# Optional water-quality parameter catalog (keep Forecasting dropdown consistent with Plot Time Series).
+# We try to import the same catalog used elsewhere; if unavailable, we fall back to a small, safe set.
+try:
+    from core.cache.get_station_timeseries import (
+        ALL_PARAMETERS,
+        PCODE_TEMP,
+        PCODE_SC,
+        PCODE_DO,
+        PCODE_PH,
+        PCODE_TURB,
+    )
+except Exception:
+    ALL_PARAMETERS = [
+        str(PCODE_FLOW),
+        str(PCODE_STAGE),
+        "00010",  # temperature
+        "00095",  # specific conductance
+        "00300",  # dissolved oxygen
+        "00400",  # pH
+        "63680",  # turbidity
+    ]
+    PCODE_TEMP = "00010"
+    PCODE_SC = "00095"
+    PCODE_DO = "00300"
+    PCODE_PH = "00400"
+    PCODE_TURB = "63680"
+
 
 # -----------------------------
 # Synthetic history (v0.4.1)
@@ -224,6 +258,7 @@ def render_forecasting(role: Optional[str] = None) -> None:
             options=["All selected stations", "Choose stations"],
             horizontal=True,
             index=0,
+            key="fcst_scope",
         )
     with top2:
         st.caption(f"Selected in Explorer: **{len(selected_ids)}**")
@@ -233,6 +268,7 @@ def render_forecasting(role: Optional[str] = None) -> None:
             "Stations",
             options=selected_ids,
             default=selected_ids[:1] if selected_ids else [],
+            key="fcst_station_ids",
         )
     else:
         station_ids = selected_ids
@@ -240,6 +276,38 @@ def render_forecasting(role: Optional[str] = None) -> None:
     if not station_ids:
         st.warning("Choose at least one station to proceed.")
         return
+
+    # --- Parameter selection (consistent with Plot Time Series) ---
+    # Always show the app-wide parameter catalog; per-station availability is handled during execution.
+    param_labels = {
+        str(PCODE_FLOW): "00060 – Flow (Discharge)",
+        str(PCODE_STAGE): "00065 – Stage (Gage height)",
+        str(PCODE_TEMP): "00010 – Water temperature",
+        str(PCODE_SC):   "00095 – Specific conductance",
+        str(PCODE_DO):   "00300 – Dissolved oxygen",
+        str(PCODE_PH):   "00400 – pH",
+        str(PCODE_TURB): "63680 – Turbidity",
+    }
+
+    role_norm = (role or "").lower().strip()
+    if role_norm == "playground":
+        parameter_code = str(PCODE_STAGE)
+        st.info("Playground is restricted to parameter **00065 (Stage)**.")
+    else:
+        # Plot Time Series behavior: show all known parameters, try per station, warn if missing.
+        _all_params_str = [str(p) for p in ALL_PARAMETERS]
+        parameter_code = st.selectbox(
+            "Parameter",
+            options=_all_params_str,
+            format_func=lambda p: param_labels.get(str(p), str(p)),
+            index=_all_params_str.index(str(PCODE_STAGE)) if str(PCODE_STAGE) in _all_params_str else 0,
+            key="fcst_parameter_code",
+        )
+
+    if role_norm == "playground":
+        history_days = 1
+    else:
+        history_days = st.selectbox("History window (days)", options=[1, 2, 3, 5, 7], index=4)
 
     model_options = _model_options_for_role(role)
 
@@ -249,9 +317,13 @@ def render_forecasting(role: Optional[str] = None) -> None:
             "Model",
             options=list(model_options.keys()),
             index=0,
+            key="fcst_model_label",
         )
     with c2:
-        horizon = st.number_input("Horizon (steps)", min_value=1, max_value=3, value=1, step=1)
+        if (role or "").lower().strip() == "playground":
+            horizon = st.number_input("Horizon (hours)", min_value=1, max_value=3, value=1, step=1)
+        else:
+            horizon = st.selectbox("Horizon (hours)", options=[24, 48, 72], index=0)
     with c3:
         use_pi = st.toggle("Show prediction interval (80%)", value=True)
     with c4:
@@ -277,7 +349,7 @@ def render_forecasting(role: Optional[str] = None) -> None:
         "Training is disabled here (Admin/User training only)."
     )
 
-    if (role or '').lower().strip() in ('admin', 'user'):
+    if (role or "").lower().strip() in ("admin", "user"):
         st.caption("Admin/User: Chronos-Base and Chronos-Large are enabled for benchmarking.")
 
     if not run:
@@ -291,20 +363,52 @@ def render_forecasting(role: Optional[str] = None) -> None:
     rows: list[dict] = []
     history_by_station: dict[str, pd.DataFrame] = {}
 
-    # NOTE: Until real data is wired, we generate a synthetic history per station.
     for station_id in station_ids:
-        history_df = _build_synthetic_history_utc(station_id, hours=14 * 24)
+        site_no = _site_from_monitoring_location_id(station_id)
+
+        try:
+            df_iv = ensure_iv_window(site_no, parameter_code, days=int(history_days))
+        except Exception as e:
+            df_iv = pd.DataFrame()
+            st.warning(
+                f"IV history load failed for {station_id} {parameter_code}: {e}. Skipping."
+            )
+
+        if df_iv is None or df_iv.empty:
+            st.warning(f"No IV data returned for station {station_id} parameter {parameter_code}. Skipping.")
+            continue
+        else:
+            history_df = df_iv.copy()
+            if "datetime_utc" in history_df.columns:
+                history_df["Datetime"] = pd.to_datetime(history_df["datetime_utc"], utc=True, errors="coerce")
+            else:
+                history_df["Datetime"] = pd.to_datetime(history_df.get("Datetime"), utc=True, errors="coerce")
+
+            if "value" in history_df.columns:
+                history_df["Value"] = pd.to_numeric(history_df["value"], errors="coerce")
+            else:
+                history_df["Value"] = pd.to_numeric(history_df.get("Value"), errors="coerce")
+
+            history_df = history_df.dropna(subset=["Datetime", "Value"]).sort_values("Datetime")
+            history_df = history_df[["Datetime", "Value"]]
+
+            if history_df.empty:
+                st.warning(
+                    f"No usable rows after cleaning for station {station_id} parameter {parameter_code}. Skipping."
+                )
+                continue
+
         history_by_station[station_id] = history_df
 
         # Artifacts directory (may not exist yet; model implementations decide behavior)
-        art_dir = model_dir(station_id, parameter="Value", model_key=selected_model_key)
+        art_dir = model_dir(station_id, parameter=str(parameter_code), model_key=selected_model_key)
 
         # Instantiate model
         model = create_model(selected_model_key)
 
         # Load artifacts; if missing for non-persistence, fallback to persistence
         try:
-            artifacts = model.load_artifacts(art_dir, station_id, parameter="Value")
+            artifacts = model.load_artifacts(art_dir, station_id, parameter=str(parameter_code))
             used_model_label = model_label
         except FileNotFoundError:
             if selected_model_key != "persistence":
@@ -313,9 +417,9 @@ def render_forecasting(role: Optional[str] = None) -> None:
                     "Train this model in Admin/User training first. Falling back to **Persistence**."
                 )
             model = create_model("persistence")
-            art_dir_eff = model_dir(station_id, parameter="Value", model_key="persistence")
+            art_dir_eff = model_dir(station_id, parameter=str(parameter_code), model_key="persistence")
             try:
-                artifacts = model.load_artifacts(art_dir_eff, station_id, parameter="Value")
+                artifacts = model.load_artifacts(art_dir_eff, station_id, parameter=str(parameter_code))
             except FileNotFoundError:
                 artifacts = {}
             used_model_label = "Persistence"
@@ -327,7 +431,7 @@ def render_forecasting(role: Optional[str] = None) -> None:
 
         req = ForecastRequest(
             station_id=station_id,
-            parameter="Value",
+            parameter=str(parameter_code),
             history=history_df[["Datetime", "Value"]].copy(),
             horizon=horizon_i,
             session_seed=session_seed,
@@ -368,6 +472,10 @@ def render_forecasting(role: Optional[str] = None) -> None:
             )
 
     df_fcst = pd.DataFrame(rows)
+
+    if df_fcst.empty:
+        st.warning("No stations returned data for the selected parameter. Nothing to forecast.")
+        return
 
     title = f"Forecast — {model_label} | PI: {pi_method_label}"
 

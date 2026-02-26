@@ -141,6 +141,29 @@ def _plot_timeseries(df: pd.DataFrame, param_label: str) -> None:
         st.warning("No data available for the selected configuration.")
         return
 
+    with st.expander("Diagnostics (raw IV data)", expanded=False):
+        st.write(
+            {
+                "rows": int(len(df)),
+                "datetime_utc_min": str(df["datetime_utc"].min()) if "datetime_utc" in df.columns else None,
+                "datetime_utc_max": str(df["datetime_utc"].max()) if "datetime_utc" in df.columns else None,
+                "value_dtype": str(df["value"].dtype) if "value" in df.columns else None,
+                "value_nunique": int(df["value"].nunique(dropna=True)) if "value" in df.columns else None,
+                "value_min": float(pd.to_numeric(df["value"], errors="coerce").min()) if "value" in df.columns else None,
+                "value_max": float(pd.to_numeric(df["value"], errors="coerce").max()) if "value" in df.columns else None,
+            }
+        )
+
+        if "date_utc" in df.columns:
+            counts = df.groupby("date_utc").size().sort_index()
+            st.write("Rows per day (date_utc):")
+            st.dataframe(counts.rename("rows").reset_index(), use_container_width=True)
+
+        st.write("Head (10):")
+        st.dataframe(df.head(10), use_container_width=True)
+        st.write("Tail (10):")
+        st.dataframe(df.tail(10), use_container_width=True)
+
     # Gráfico de série temporal com uma curva por estação
     chart = (
         alt.Chart(df)
