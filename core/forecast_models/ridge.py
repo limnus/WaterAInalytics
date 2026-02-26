@@ -18,86 +18,82 @@ def _ensure_datetime_value(df: pd.DataFrame) -> pd.DataFrame:
         raise ValueError("history is empty")
     if "Datetime" not in df.columns or "Value" not in df.columns:
         raise ValueError("history must contain columns: 'Datetime', 'Value'")
-
     out = df.copy()
     out["Datetime"] = pd.to_datetime(out["Datetime"], utc=True, errors="coerce")
     out["Value"] = pd.to_numeric(out["Value"], errors="coerce")
     out = out.dropna(subset=["Datetime", "Value"]).sort_values("Datetime")
-
+    out = out[~out["Value"].isin(_SENTINELS)]
     if out.empty:
-        raise ValueError("history has no valid Datetime/Value rows after cleaning")
-
-    out = out[~out["Value"].isin(list(_SENTINELS))]
-    out = out[(out["Value"] > -1e12) & (out["Value"] < 1e12)]
-
-    if out.empty:
-        raise ValueError("history is empty after removing sentinel/outlier values")
-    return out
+        raise ValueError("history has no usable rows after cleaning")
+    return out.reset_index(drop=True)
 
 
 def _is_all_int(series: pd.Series) -> bool:
-    v = series.dropna().astype(float).values
-    return v.size > 0 and np.all(np.isclose(v, np.round(v)))
+    s = pd.to_numeric(series, errors="coerce")
+    s = s.dropna()
+    if s.empty:
+        return False
+    return bool(np.all(np.isclose(s.values, np.round(s.values))))
 
 
 def _is_all_nonneg(series: pd.Series) -> bool:
-    v = series.dropna().astype(float).values
-    return v.size > 0 and np.all(v >= 0)
+    s = pd.to_numeric(series, errors="coerce")
+    s = s.dropna()
+    if s.empty:
+        return False
+    return bool(np.all(s.values >= 0.0))
 
 
 def _build_features(values: np.ndarray, *, lags: List[int], roll_means: List[int]) -> np.ndarray:
     feats: List[float] = []
-    n = len(values)
-    for lag in lags:
-        feats.append(float(values[n - lag]) if n - lag >= 0 else float("nan"))
-    for w in roll_means:
-        if n - w >= 0:
-            feats.append(float(np.mean(values[n - w : n])))
+    # lags
+    for k in lags:
+        if len(values) - k < 0:
+            feats.append(np.nan)
         else:
-            feats.append(float("nan"))
+            feats.append(float(values[-k]))
+    # rolling means
+    for w in roll_means:
+        if len(values) - w < 0:
+            feats.append(np.nan)
+        else:
+            feats.append(float(np.mean(values[-w:])))
     return np.asarray(feats, dtype=float)
 
 
-def _build_supervised_matrix(
-    series: pd.Series, *, lags: List[int], roll_means: List[int]
-) -> Tuple[np.ndarray, np.ndarray]:
-    y = series.astype(float).values
-    max_lookback = max(max(lags, default=1), max(roll_means, default=1))
-
-    rows_x: List[np.ndarray] = []
-    rows_y: List[float] = []
-
-    for t in range(max_lookback, len(y)):
-        hist = y[:t]
-        x_t = _build_features(hist, lags=lags, roll_means=roll_means)
-        if np.any(~np.isfinite(x_t)):
+def _build_supervised_matrix(series: pd.Series, *, lags: List[int], roll_means: List[int]) -> Tuple[np.ndarray, np.ndarray]:
+    vals = series.astype(float).values
+    max_back = max(max(lags) if lags else 0, max(roll_means) if roll_means else 0)
+    X_rows: List[np.ndarray] = []
+    y_rows: List[float] = []
+    for t in range(max_back, len(vals)):
+        x = _build_features(vals[:t], lags=lags, roll_means=roll_means)
+        if np.any(~np.isfinite(x)):
             continue
-        rows_x.append(x_t)
-        rows_y.append(float(y[t]))
-
-    if not rows_x:
-        raise ValueError("Not enough data to build Ridge supervised dataset (after lookback).")
-
-    X = np.vstack(rows_x)
-    Y = np.asarray(rows_y, dtype=float)
-    return X, Y
+        X_rows.append(x)
+        y_rows.append(float(vals[t]))
+    if not X_rows:
+        raise ValueError("Not enough data to build supervised matrix for Ridge.")
+    return np.vstack(X_rows), np.asarray(y_rows, dtype=float)
 
 
 def _standardize_fit(X: np.ndarray) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
-    mu = X.mean(axis=0)
-    sd = X.std(axis=0)
-    sd = np.where(sd == 0, 1.0, sd)
+    mu = np.mean(X, axis=0)
+    sd = np.std(X, axis=0)
+    sd = np.where(sd == 0.0, 1.0, sd)
     Xs = (X - mu) / sd
     return Xs, mu, sd
 
 
 def _standardize_apply(X: np.ndarray, mu: np.ndarray, sd: np.ndarray) -> np.ndarray:
+    sd = np.where(sd == 0.0, 1.0, sd)
     return (X - mu) / sd
 
 
 def _ridge_fit_closed_form(X: np.ndarray, y: np.ndarray, alpha: float) -> np.ndarray:
+    # Solve (X^T X + alpha I) w = X^T y
     n_features = X.shape[1]
-    A = X.T @ X + alpha * np.eye(n_features)
+    A = X.T @ X + float(alpha) * np.eye(n_features)
     b = X.T @ y
     w = np.linalg.solve(A, b)
     return w
@@ -107,7 +103,12 @@ def _ridge_predict(X: np.ndarray, w: np.ndarray) -> np.ndarray:
     return X @ w
 
 
-@dataclass
+def _compute_sigma_rmse(resid: np.ndarray) -> Tuple[float, float]:
+    rmse = float(np.sqrt(np.mean(resid**2)))
+    sigma = float(np.std(resid, ddof=1)) if resid.size >= 2 else 0.0
+    return sigma, rmse
+
+
 class RidgeModel:
     model_key: str = "ridge"
 
@@ -137,6 +138,7 @@ class RidgeModel:
         w = artifacts.get("_w")
         mu = artifacts.get("_mu")
         sd = artifacts.get("_sd")
+        y_mean = float(artifacts.get("_y_mean", 0.0))
         if w is None or mu is None or sd is None:
             raise ValueError("Ridge artifacts missing weights/scaler arrays.")
 
@@ -153,7 +155,7 @@ class RidgeModel:
                 yhat = float(values[-1])  # fallback persistence
             else:
                 xs = _standardize_apply(x[None, :], mu, sd)
-                yhat = float(_ridge_predict(xs, w)[0])
+                yhat = float(_ridge_predict(xs, w)[0] + y_mean)
             preds.append(yhat)
             values = np.append(values, yhat)
 
@@ -188,16 +190,6 @@ class RidgeModel:
         )
 
 
-def _compute_sigma_rmse(resid: np.ndarray) -> tuple[float, float]:
-    resid = np.asarray(resid, dtype=float)
-    if resid.size >= 2:
-        sigma = float(np.std(resid, ddof=1))
-    else:
-        sigma = float(np.std(resid))
-    rmse = float(np.sqrt(np.mean(resid**2))) if resid.size else float("nan")
-    return max(0.0, sigma), rmse
-
-
 def train_ridge_from_history(
     history_df: pd.DataFrame,
     *,
@@ -226,10 +218,15 @@ def train_ridge_from_history(
     Xs_train, mu, sd = _standardize_fit(X_train)
     Xs_valid = _standardize_apply(X_valid, mu, sd)
 
-    w = _ridge_fit_closed_form(Xs_train, y_train, float(alpha))
+    # --- Minimal "intercept" fix: center y and store y_mean as artifact ---
+    y_mean = float(np.mean(y_train))
+    y_train_c = y_train - y_mean
+    y_valid_c = y_valid - y_mean
 
-    resid_valid = y_valid - _ridge_predict(Xs_valid, w)
-    resid_train = y_train - _ridge_predict(Xs_train, w)
+    w = _ridge_fit_closed_form(Xs_train, y_train_c, float(alpha))
+
+    resid_valid = y_valid_c - _ridge_predict(Xs_valid, w)
+    resid_train = y_train_c - _ridge_predict(Xs_train, w)
 
     if resid_valid.size >= 2:
         sigma, rmse = _compute_sigma_rmse(resid_valid)
@@ -253,6 +250,7 @@ def train_ridge_from_history(
         "n_valid": int(n_valid),
         "all_int": bool(all_int),
         "all_nonneg": bool(all_nonneg),
+        "_y_mean": float(y_mean),
         "_w": w,
         "_mu": mu,
         "_sd": sd,
@@ -285,17 +283,26 @@ def tune_ridge_alpha(
             min_valid=min_valid,
         )
         rmse = float(art.get("rmse_valid", float("inf")))
-        rmse_by_alpha[f"{float(a):g}"] = rmse
+        rmse_by_alpha[str(a)] = rmse
         if np.isfinite(rmse) and rmse < best_rmse:
             best_rmse = rmse
             best_artifacts = art
 
     if best_artifacts is None:
-        best_artifacts = train_ridge_from_history(history_df, alpha=float(alphas[0]), lags=lags, roll_means=roll_means)
+        best_artifacts = train_ridge_from_history(
+            history_df,
+            alpha=float(alphas[0]),
+            lags=lags,
+            roll_means=roll_means,
+            valid_frac=valid_frac,
+            min_valid=min_valid,
+        )
+        best_rmse = float(best_artifacts.get("rmse_valid", float("nan")))
 
-    best_artifacts["alpha_grid"] = [float(a) for a in alphas]
+    best_artifacts = dict(best_artifacts)
     best_artifacts["rmse_by_alpha"] = rmse_by_alpha
-    best_artifacts["best_alpha"] = float(best_artifacts["alpha"])
+    best_artifacts["best_alpha"] = float(best_artifacts.get("alpha", float(alphas[0])))
+    best_artifacts["best_rmse_valid"] = float(best_rmse)
     return best_artifacts
 
 
@@ -304,12 +311,18 @@ def save_ridge_artifacts(artifacts_dir: Path, artifacts: Dict[str, Any]) -> None
 
     import json
 
-    meta = {k: v for k, v in artifacts.items() if not str(k).startswith("_")}
-    (artifacts_dir / "meta.json").write_text(json.dumps(meta, indent=2), encoding="utf-8")
+    meta = dict(artifacts)
+    w = meta.pop("_w")
+    mu = meta.pop("_mu")
+    sd = meta.pop("_sd")
+
+    meta_json = json.dumps(meta, indent=2, sort_keys=True)
+    (artifacts_dir / "meta.json").write_text(meta_json, encoding="utf-8")
 
     np.savez_compressed(
         artifacts_dir / "weights.npz",
-        w=np.asarray(artifacts["_w"], dtype=float),
-        mu=np.asarray(artifacts["_mu"], dtype=float),
-        sd=np.asarray(artifacts["_sd"], dtype=float),
+        w=w,
+        mu=mu,
+        sd=sd,
     )
+    
