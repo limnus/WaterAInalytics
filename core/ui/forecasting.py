@@ -104,7 +104,8 @@ def _render_forecast_plot(
     - Forecast: dashed line (+ markers), same color as measured
     - PI: shaded band (or errorbar if horizon==1)
     """
-    fig = plt.figure()
+    # More compact, slide-friendly canvas
+    fig = plt.figure(figsize=(10, 4.6), dpi=110)
     ax = fig.add_subplot(111)
 
     for sid in station_ids:
@@ -186,11 +187,18 @@ def _render_forecast_plot(
     ax.set_title(title)
     ax.set_xlabel("Time (UTC)")
     ax.set_ylabel("Value")
-    ax.legend(loc="best")
+    ax.legend(
+        loc="center left",
+        bbox_to_anchor=(1.02, 0.5),
+        borderaxespad=0.0,
+        frameon=True,
+    )
     fig.autofmt_xdate()
 
+    fig.tight_layout()
+    
     buf = BytesIO()
-    fig.savefig(buf, format="png", dpi=150, bbox_inches="tight")
+    fig.savefig(buf, format="png", dpi=150) #, bbox_inches="tight", pad_inches=0.2)
     png_bytes = buf.getvalue()
     buf.close()
     return fig, png_bytes
