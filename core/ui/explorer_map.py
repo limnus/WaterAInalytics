@@ -369,18 +369,31 @@ def render_explorer_map(role: Optional[str] = None) -> None:
     - Aplica filtros dropdown.
     - Permite gerenciar uma lista de estações selecionadas.
     - Mostra o mapa com destaque para as selecionadas.
-    - Para o papel Playground, limita a ~20% das estações.
+    - Para o papel Playground, limita a ~10% das estações.
     """
     st.markdown("### Station Explorer & Map")
 
     df_all = _ensure_stations_df()
 
-    # Restrição para Playground: subamostra (~20%)
+        # Restrição para Playground: subamostra (~10%)
     if role == "Playground" and not df_all.empty:
-        df_play = df_all.sample(frac=0.2, random_state=42)
+        df_play = df_all.sample(frac=0.1, random_state=42)
+
+        # Ensure paper anchor stations are always included (dedupe-safe).
+        anchor_ids = [
+            "USGS-07010000",
+            "USGS-05586100",
+            "USGS-07374525",
+        ]
+        df_anchors = df_all[df_all["monitoring_location_id"].isin(anchor_ids)]
+
+        if not df_anchors.empty:
+            df_play = pd.concat([df_play, df_anchors], ignore_index=True)
+            df_play = df_play.drop_duplicates(subset=["monitoring_location_id"], keep="first")
+
         st.warning(
             f"Playground mode: showing a random subset of {len(df_play)} "
-            f"of {len(df_all)} stations (~20%)."
+            f"of {len(df_all)} stations (~10%), plus paper anchor stations."
         )
         df_base = df_play
     else:

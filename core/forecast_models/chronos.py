@@ -15,13 +15,16 @@ from .ridge import _ensure_datetime_value, _is_all_int, _is_all_nonneg
 def _require_chronos():
     try:
         import torch  # noqa: F401
-        from chronos import ChronosPipeline  # type: ignore
+        # IMPORTANT:
+        # Use BaseChronosPipeline so Bolt models load with the correct pipeline/config.
+        from chronos import BaseChronosPipeline  # type: ignore
     except Exception as e:  # pragma: no cover
         raise RuntimeError(
-            "Chronos dependencies are not installed. Install torch + chronos-forecasting (+ transformers).\n"
+            "Chronos dependencies are not installed or Chronos import failed. "
+            "Install torch + chronos-forecasting (+ transformers).\n"
             "Suggested: pip install git+https://github.com/amazon-science/chronos-forecasting.git"
         ) from e
-    return ChronosPipeline
+    return BaseChronosPipeline
 
 
 _PIPELINE_CACHE: Dict[tuple[str, str], Any] = {}
@@ -42,10 +45,37 @@ def _get_pipeline(model_id: str, device: str) -> Any:
     if key in _PIPELINE_CACHE:
         return _PIPELINE_CACHE[key]
 
-    ChronosPipeline = _require_chronos()
-    pipe = ChronosPipeline.from_pretrained(model_id, device_map=device, torch_dtype="auto")
+    BaseChronosPipeline = _require_chronos()
+    pipe = BaseChronosPipeline.from_pretrained(model_id, device_map=device, torch_dtype="auto")
     _PIPELINE_CACHE[key] = pipe
     return pipe
+
+
+def _pipe_predict(pipe: Any, ctx_t: Any, prediction_length: int, num_samples: int) -> Any:
+    """
+    Compatibility wrapper for Chronos pipelines.
+    - Some Bolt builds don't accept num_samples.
+    - Some builds have positional-only context (and sometimes prediction_length).
+    """
+    # Attempt 1: common API (non-bolt)
+    try:
+        return pipe.predict(ctx_t, prediction_length=int(prediction_length), num_samples=int(num_samples))
+    except TypeError as e:
+        msg = str(e)
+        if "num_samples" in msg:
+            pass
+        else:
+            raise
+
+    # Attempt 2: no num_samples (Bolt)
+    try:
+        return pipe.predict(ctx_t, prediction_length=int(prediction_length))
+    except TypeError as e:
+        msg = str(e)
+        # Some variants may not accept prediction_length as keyword
+        if "prediction_length" in msg or "unexpected keyword argument" in msg:
+            return pipe.predict(ctx_t, int(prediction_length))
+        raise
 
 
 @dataclass
@@ -61,15 +91,18 @@ class ChronosModel:
         return json.loads(meta_path.read_text(encoding="utf-8"))
 
     def predict(self, req: ForecastRequest, artifacts: Dict[str, Any]) -> ForecastOutput:
+        import torch
+
         df = _ensure_datetime_value(req.history)
         series = df["Value"].astype(float)
 
         model_id = str(artifacts.get("model_id", self.model_id))
         context_hours = int(artifacts.get("best_context_hours", 24 * 14))
-        context_hours = max(1, min(context_hours, 24 * 14))  # <= 14 days (PlayGround policy)
+        context_hours = max(1, min(context_hours, 24 * 14))  # <= 14 days
 
         values = series.values
         ctx = values[-min(len(values), context_hours):].astype(np.float32)
+        ctx_t = torch.tensor(ctx)
 
         device = _get_device(artifacts.get("device"))
         pipe = _get_pipeline(model_id, device=device)
@@ -82,13 +115,24 @@ class ChronosModel:
             last_dt + pd.Timedelta(hours=1), periods=int(req.horizon), freq=req.freq, tz="UTC"
         )
 
-        fc = pipe.predict(context=ctx, prediction_length=int(req.horizon), num_samples=num_samples)
+        fc = _pipe_predict(pipe, ctx_t, int(req.horizon), num_samples)
+
         try:
             fc_np = fc.detach().cpu().numpy()
         except Exception:
             fc_np = np.asarray(fc)
 
-        yhat = np.median(fc_np, axis=0).astype(float)
+        # For Bolt: [num_series, num_quantiles, prediction_length]
+        # For non-bolt: often [num_samples, prediction_length]
+        # Take a robust median across the "sample/quantile" dimension(s).
+        if fc_np.ndim == 3:
+            yhat = np.median(fc_np, axis=1)[0]
+        elif fc_np.ndim == 2:
+            yhat = np.median(fc_np, axis=0)
+        else:
+            yhat = fc_np.reshape(-1)
+
+        yhat = np.asarray(yhat, dtype=float)
         y_pred = pd.Series(yhat, index=future_idx, name="y_pred")
 
         all_int = bool(artifacts.get("all_int", _is_all_int(series)))
@@ -138,6 +182,8 @@ def optimize_chronos_context(
     device: Optional[str] = None,
     num_samples: int = 20,
 ) -> Dict[str, Any]:
+    import torch
+
     df = _ensure_datetime_value(history_df)
     y = df["Value"].astype(float).values
 
@@ -170,13 +216,21 @@ def optimize_chronos_context(
             if ctx.size < 2:
                 continue
 
-            fc = pipe.predict(context=ctx, prediction_length=1, num_samples=num_samples)
+            ctx_t = torch.tensor(ctx)
+            fc = _pipe_predict(pipe, ctx_t, 1, num_samples)
+
             try:
                 fc_np = fc.detach().cpu().numpy()
             except Exception:
                 fc_np = np.asarray(fc)
 
-            yhat = float(np.median(fc_np, axis=0)[0])
+            if fc_np.ndim == 3:
+                yhat = float(np.median(fc_np, axis=1)[0, 0])
+            elif fc_np.ndim == 2:
+                yhat = float(np.median(fc_np, axis=0)[0])
+            else:
+                yhat = float(np.asarray(fc_np).reshape(-1)[0])
+
             preds.append(yhat)
             trues.append(float(y[k]))
 
