@@ -14,7 +14,7 @@ ERR_INVALID_CREDENTIALS = "Invalid username or password."
 INFO_SESSION_EXPIRED = "Your session has expired due to inactivity. Please sign in again."
 
 LOGIN_SUBTITLE = "Use your account to access the full system, or try the demo in Playground mode."
-INFO_PLAYGROUND_LIMITS = "Playground is a limited demo (read-only)."
+INFO_PLAYGROUND_LIMITS = "Playground is a limited demo (read-only). Analysis output is intentionally truncated."
 ERR_ACCOUNT_LOCKED = "Account is temporarily locked due to failed attempts. Please try again later."
 ERR_ACCOUNT_DISABLED = "Account is disabled. Please contact an administrator."
 SUCCESS_LOGIN = "Signed in successfully."

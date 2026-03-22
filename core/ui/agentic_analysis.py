@@ -15,6 +15,7 @@ from core.llm_analysis.config import AnalysisConfig, PagePolicy, ReportStyle
 from core.llm_analysis.pipeline import run_analysis
 from core.llm_analysis.forecast_integration.adapter import forecast_output_to_context
 from core.llm_analysis.llm_agent import LLMConfig, run_llm_analyst
+from core.ui.playground_output import apply_output_policy
 
 
 def render_agentic_analysis(role: str | None = None) -> None:
@@ -178,7 +179,10 @@ def render_agentic_analysis(role: str | None = None) -> None:
         return
 
     st.markdown("### Generated Report")
-    st.markdown(result.report.content)
+    rendered_report = apply_output_policy(content=result.report.content, role=role)
+    if rendered_report.truncated:
+        st.warning(rendered_report.notice)
+    st.markdown(rendered_report.content)
 
     st.markdown("### Audit Info")
     st.json({
@@ -194,7 +198,7 @@ def render_agentic_analysis(role: str | None = None) -> None:
     })
 
     # v0.8.1 artifacts (best-effort)
-    if getattr(result.audit, "artifacts", None):
+    if is_paid and getattr(result.audit, "artifacts", None):
         with st.expander("v0.8.1 Artifacts (Evidence / Claims / Narrative)", expanded=False):
             st.json(result.audit.artifacts)
 
@@ -212,6 +216,11 @@ def render_agentic_analysis(role: str | None = None) -> None:
     # -------------------------
     # v0.9.0: Optional LLM Analyst (read-only)
     # -------------------------
+    if not is_paid:
+        st.markdown("---")
+        st.info("Optional LLM Analyst is available only for authenticated User/Admin accounts.")
+        return
+
     st.markdown("---")
     st.markdown("### Optional LLM Analyst (v0.9.0)")
     st.caption(
@@ -305,7 +314,10 @@ def render_agentic_analysis(role: str | None = None) -> None:
                     user_question=user_question,
                 )
                 st.success("LLM report generated and appended to run.json")
-                st.markdown(rep.output_markdown)
+                rendered_llm = apply_output_policy(content=rep.output_markdown, role=role)
+                if rendered_llm.truncated:
+                    st.warning(rendered_llm.notice)
+                st.markdown(rendered_llm.content)
                 with st.expander("LLM Report JSON", expanded=False):
                     st.json(rep.output_json)
                 with st.expander("LLM Audit", expanded=False):

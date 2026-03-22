@@ -14,7 +14,7 @@ ERR_INVALID_CREDENTIALS = "Usuário ou senha inválidos."
 INFO_SESSION_EXPIRED = "Sua sessão expirou por inatividade. Faça login novamente."
 
 LOGIN_SUBTITLE = "Use sua conta para acessar o sistema completo ou experimente a demonstração no modo Playground."
-INFO_PLAYGROUND_LIMITS = "O Playground é uma demonstração limitada (somente leitura)."
+INFO_PLAYGROUND_LIMITS = "O Playground é uma demonstração limitada (somente leitura). A saída da análise é truncada intencionalmente."
 ERR_ACCOUNT_LOCKED = "A conta foi temporariamente bloqueada devido a tentativas malsucedidas. Tente novamente mais tarde."
 ERR_ACCOUNT_DISABLED = "A conta está desativada. Entre em contato com um administrador."
 SUCCESS_LOGIN = "Login realizado com sucesso."

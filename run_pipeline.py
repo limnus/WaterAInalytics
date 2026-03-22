@@ -14,6 +14,7 @@ from pathlib import Path
 
 import pandas as pd
 
+from core.config.env import load_project_env
 from core.pipeline.iv_pipeline import run_iv_pipeline, write_pipeline_outputs
 from core.cache.get_stations import update_usgs_station_cache
 
@@ -87,6 +88,7 @@ def _load_sites_from_csv(csv_path: str, limit: int | None) -> list[str]:
 
 
 def main() -> None:
+    load_project_env()
     args = _parse_args()
 
     if (not args.sites) and (not args.stations_csv):

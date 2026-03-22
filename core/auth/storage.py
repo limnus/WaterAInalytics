@@ -23,6 +23,8 @@ from typing import Any, Dict, List, Optional
 from argon2 import PasswordHasher
 from argon2.exceptions import VerifyMismatchError
 
+from core.config.env import get_runtime_settings
+
 
 DEFAULT_DB_PATH = str(Path("data") / "auth.db")
 DEFAULT_ADMIN_USERNAME = "Admin"
@@ -125,6 +127,8 @@ def ensure_default_admin(db_path: str = DEFAULT_DB_PATH, initial_password: Optio
             return {"created": False, "username": DEFAULT_ADMIN_USERNAME}
 
         if initial_password is None:
+            initial_password = get_runtime_settings().auth_admin_initial_password
+        if not initial_password:
             initial_password = f"Admin-{_utc_now().strftime('%Y%m%d%H%M%S')}"
 
         pw_hash = PH.hash(initial_password)
@@ -163,6 +167,23 @@ def create_user(username: str, password: str, role: str = "User", db_path: str =
         conn.commit()
 
 
+def list_users(db_path: str = DEFAULT_DB_PATH) -> List[Dict[str, Any]]:
+    init_db(db_path)
+    with _connect(db_path) as conn:
+        rows = conn.execute(
+            """
+            SELECT username, role, is_active, created_at_utc, updated_at_utc,
+                   last_login_utc, failed_attempts, locked_until_utc
+            FROM users
+            ORDER BY CASE WHEN username = ? THEN 0 ELSE 1 END,
+                     role DESC,
+                     username COLLATE NOCASE ASC
+            """,
+            (DEFAULT_ADMIN_USERNAME,),
+        ).fetchall()
+    return [dict(r) for r in rows]
+
+
 def set_password(username: str, new_password: str, db_path: str = DEFAULT_DB_PATH) -> None:
     init_db(db_path)
     if not new_password:
@@ -182,12 +203,30 @@ def set_password(username: str, new_password: str, db_path: str = DEFAULT_DB_PAT
 
 def set_active(username: str, is_active: bool, db_path: str = DEFAULT_DB_PATH) -> None:
     init_db(db_path)
+    username = username.strip()
+    if username == DEFAULT_ADMIN_USERNAME and not is_active:
+        raise ValueError("The default Admin account cannot be deactivated.")
     now = _dt_to_iso(_utc_now())
     with _connect(db_path) as conn:
         cur = conn.execute(
             "UPDATE users SET is_active = ?, updated_at_utc = ? WHERE username = ?",
-            (1 if is_active else 0, now, username.strip()),
+            (1 if is_active else 0, now, username),
         )
+        if cur.rowcount == 0:
+            raise ValueError("User not found.")
+        conn.commit()
+
+
+def delete_user(username: str, db_path: str = DEFAULT_DB_PATH) -> None:
+    init_db(db_path)
+    username = (username or "").strip()
+    if not username:
+        raise ValueError("Username must be non-empty.")
+    if username == DEFAULT_ADMIN_USERNAME:
+        raise ValueError("The default Admin account cannot be deleted.")
+
+    with _connect(db_path) as conn:
+        cur = conn.execute("DELETE FROM users WHERE username = ?", (username,))
         if cur.rowcount == 0:
             raise ValueError("User not found.")
         conn.commit()
@@ -282,6 +321,10 @@ def _self_test() -> int:
     r = authenticate_user("user@example.com", "Passw0rd!", test_db)
     assert r.ok and r.role == "User"
 
+    users = list_users(test_db)
+    assert any(u["username"] == DEFAULT_ADMIN_USERNAME for u in users)
+    assert any(u["username"] == "user@example.com" for u in users)
+
     try:
         create_user("not-an-email", "x", "User", test_db)
         raise AssertionError("Expected email validation to fail.")
@@ -291,6 +334,10 @@ def _self_test() -> int:
     set_active("user@example.com", False, test_db)
     r = authenticate_user("user@example.com", "Passw0rd!", test_db)
     assert not r.ok
+
+    delete_user("user@example.com", test_db)
+    users = list_users(test_db)
+    assert not any(u["username"] == "user@example.com" for u in users)
 
     print("Self-test PASSED.")
     try:

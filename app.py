@@ -1,6 +1,11 @@
 """WaterWatch — main Streamlit app entry point."""
 
 import os
+
+from core.config.env import get_runtime_settings, load_project_env
+
+load_project_env()
+
 import streamlit as st
 
 from core.version import APP_VERSION
@@ -21,6 +26,7 @@ from core.ui.plot_timeseries import render_plot_timeseries
 from core.ui.forecasting import render_forecasting
 from core.ui.agentic_analysis import render_agentic_analysis
 from core.ui.admin_models import render_admin_models
+from core.ui.admin_users import render_admin_users
 
 # ---------------------------------
 # Locale bootstrap from .config/lang.txt
@@ -69,11 +75,14 @@ st.set_page_config(
     layout="wide",
 )
 
+# Runtime settings
+RUNTIME_SETTINGS = get_runtime_settings()
+
 # Garante admin padrão
 _ = ensure_default_admin(db_path=DEFAULT_DB_PATH)
 
 # Se logado, verifica timeout
-if is_logged_in() and session_expired():
+if is_logged_in() and session_expired(timeout_minutes=RUNTIME_SETTINGS.session_timeout_minutes):
     S = get_strings()
     st.warning(S.INFO_SESSION_EXPIRED)
     logout()
@@ -170,6 +179,6 @@ with tabs[3]:
 with tabs[4]:
     admin_tabs = st.tabs(["Admin Users", "Admin Models"])
     with admin_tabs[0]:
-        st.info("Admin Users not implemented yet.")
+        render_admin_users(role=role, db_path=DEFAULT_DB_PATH)
     with admin_tabs[1]:
         render_admin_models(role=role)
