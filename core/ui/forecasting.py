@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from io import BytesIO
 from typing import Optional
 
@@ -11,6 +12,12 @@ import pandas as pd
 import streamlit as st
 
 from core.forecast_models.base import ForecastRequest
+from core.forecast_models.output_schema import (
+    StationForecastBundle,
+    build_forecast_run_artifact,
+    forecast_output_to_rows,
+    rows_to_frame,
+)
 from core.forecast_models.pi import gaussian_residual_pi
 from core.forecast_models.registry import create_model
 from core.forecast_models.paths import model_dir
@@ -370,6 +377,8 @@ def render_forecasting(role: Optional[str] = None) -> None:
 
     rows: list[dict] = []
     history_by_station: dict[str, pd.DataFrame] = {}
+    station_bundles: list[StationForecastBundle] = []
+    analysis_inputs: dict[str, dict] = {}
 
     for station_id in station_ids:
         site_no = _site_from_monitoring_location_id(station_id)
@@ -432,6 +441,8 @@ def render_forecasting(role: Optional[str] = None) -> None:
                 artifacts = {}
             used_model_label = "Persistence"
 
+        used_model_key = model.model_key
+
         # Inject UI noise into persistence artifacts (clamped inside the model)
         if model.model_key == "persistence":
             artifacts = dict(artifacts)
@@ -449,13 +460,6 @@ def render_forecasting(role: Optional[str] = None) -> None:
         y_pred = out.y_pred
         sigma = float(out.sigma_residual)
 
-        # --- Persist latest forecast for Agentic Analysis ---
-        st.session_state["latest_forecast_output"] = out
-        st.session_state["latest_history_df"] = history_df.copy()
-        st.session_state["latest_station_ids"] = station_ids
-        st.session_state["latest_model_key"] = selected_model_key
-        st.session_state["latest_horizon"] = horizon_i
-
         if use_pi:
             pi = gaussian_residual_pi(y_pred, sigma, level=0.8)
             pi_low = pi.lower
@@ -464,26 +468,64 @@ def render_forecasting(role: Optional[str] = None) -> None:
             pi_low = pd.Series([np.nan] * len(y_pred), index=y_pred.index, name="pi_low")
             pi_high = pd.Series([np.nan] * len(y_pred), index=y_pred.index, name="pi_high")
 
-        for ts in y_pred.index:
-            rows.append(
-                {
-                    "station_id": station_id,
-                    "model": used_model_label,
-                    "horizon_h": horizon_i,
-                    "interval": interval_label,
-                    "pi_method": pi_method_label,
-                    "timestamp_utc": ts,
-                    "y_hat": float(y_pred.loc[ts]),
-                    "pi_low": float(pi_low.loc[ts]) if use_pi else np.nan,
-                    "pi_high": float(pi_high.loc[ts]) if use_pi else np.nan,
-                }
+        bundle = StationForecastBundle(
+            station_id=station_id,
+            parameter=str(parameter_code),
+            requested_model_key=selected_model_key,
+            requested_model_label=model_label,
+            used_model_key=used_model_key,
+            used_model_label=used_model_label,
+            forecast_output=out,
+            history_df=history_df.copy(),
+            pi_low=pi_low if use_pi else None,
+            pi_high=pi_high if use_pi else None,
+        )
+        station_bundles.append(bundle)
+        analysis_inputs[station_id] = {
+            "forecast_output": out,
+            "history_df": history_df.copy(),
+            "used_model_key": used_model_key,
+            "used_model_label": used_model_label,
+        }
+        rows.extend(
+            forecast_output_to_rows(
+                bundle=bundle,
+                horizon_h=horizon_i,
+                interval_label=interval_label,
+                pi_method_label=pi_method_label,
             )
+        )
 
-    df_fcst = pd.DataFrame(rows)
+    df_fcst = rows_to_frame(rows)
 
     if df_fcst.empty:
         st.warning("No stations returned data for the selected parameter. Nothing to forecast.")
         return
+
+    forecast_run_artifact = build_forecast_run_artifact(
+        station_bundles=station_bundles,
+        requested_model_key=selected_model_key,
+        requested_model_label=model_label,
+        parameter=str(parameter_code),
+        horizon_h=horizon_i,
+        interval_label=interval_label,
+        pi_method_label=pi_method_label,
+        session_seed=session_seed,
+    )
+
+    st.session_state["latest_forecast_run_artifact"] = forecast_run_artifact
+    st.session_state["latest_forecast_analysis_inputs"] = analysis_inputs
+    st.session_state["latest_forecast_df"] = df_fcst.copy()
+    st.session_state["latest_station_ids"] = station_ids
+    st.session_state["latest_model_key"] = selected_model_key
+    st.session_state["latest_horizon"] = horizon_i
+
+    # Backward compatibility for callers that still expect single-station keys.
+    if station_bundles:
+        first_station_id = station_bundles[0].station_id
+        first_input = analysis_inputs[first_station_id]
+        st.session_state["latest_forecast_output"] = first_input["forecast_output"]
+        st.session_state["latest_history_df"] = first_input["history_df"].copy()
 
     title = f"Forecast — {model_label} | PI: {pi_method_label}"
 
@@ -518,3 +560,13 @@ def render_forecasting(role: Optional[str] = None) -> None:
 
     with st.expander("Copy as CSV (manual)", expanded=False):
         st.text_area("CSV", value=df_fcst.to_csv(index=False), height=200)
+    json_bytes = json.dumps(forecast_run_artifact, indent=2).encode("utf-8")
+    st.download_button(
+        "Download forecast run JSON",
+        data=json_bytes,
+        file_name="forecast_run.json",
+        mime="application/json",
+    )
+
+    with st.expander("Forecast run artifact (JSON)", expanded=False):
+        st.json(forecast_run_artifact)

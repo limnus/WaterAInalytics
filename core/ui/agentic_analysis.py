@@ -15,7 +15,6 @@ from core.llm_analysis.config import AnalysisConfig, PagePolicy, ReportStyle
 from core.llm_analysis.pipeline import run_analysis
 from core.llm_analysis.forecast_integration.adapter import forecast_output_to_context
 from core.llm_analysis.llm_agent import LLMConfig, run_llm_analyst
-from core.ui.playground_output import apply_output_policy
 
 
 def render_agentic_analysis(role: str | None = None) -> None:
@@ -115,12 +114,35 @@ def render_agentic_analysis(role: str | None = None) -> None:
         force_refresh = False
 
     # --- Check forecast availability ---
-    if "latest_forecast_output" not in st.session_state:
-        st.warning("Run a forecast first in the Forecasting tab.")
-        return
+    analysis_inputs = st.session_state.get("latest_forecast_analysis_inputs") or {}
 
-    forecast_output = st.session_state["latest_forecast_output"]
-    history_df = st.session_state["latest_history_df"]
+    if analysis_inputs:
+        station_ids = sorted(analysis_inputs.keys())
+        if len(station_ids) > 1:
+            selected_station_id = st.selectbox(
+                "Station for Agentic Analysis",
+                options=station_ids,
+                index=0,
+                key="agentic_selected_station_id",
+                help="Agentic Analysis currently runs on one station at a time, using the most recent forecast run.",
+            )
+            st.caption("Multiple stations were forecast. Select the station to analyze below.")
+        else:
+            selected_station_id = station_ids[0]
+
+        selected_input = analysis_inputs[selected_station_id]
+        forecast_output = selected_input["forecast_output"]
+        history_df = selected_input["history_df"]
+        used_model_label = selected_input.get("used_model_label") or forecast_output.model_key
+        st.caption(f"Analyzing station **{selected_station_id}** with model **{used_model_label}**.")
+    else:
+        if "latest_forecast_output" not in st.session_state:
+            st.warning("Run a forecast first in the Forecasting tab.")
+            return
+
+        forecast_output = st.session_state["latest_forecast_output"]
+        history_df = st.session_state["latest_history_df"]
+        st.caption(f"Analyzing station **{forecast_output.station_id}** with legacy single-station forecast context.")
 
     # --- Build config ---
     cfg = AnalysisConfig(
@@ -179,10 +201,7 @@ def render_agentic_analysis(role: str | None = None) -> None:
         return
 
     st.markdown("### Generated Report")
-    rendered_report = apply_output_policy(content=result.report.content, role=role)
-    if rendered_report.truncated:
-        st.warning(rendered_report.notice)
-    st.markdown(rendered_report.content)
+    st.markdown(result.report.content)
 
     st.markdown("### Audit Info")
     st.json({
@@ -198,7 +217,7 @@ def render_agentic_analysis(role: str | None = None) -> None:
     })
 
     # v0.8.1 artifacts (best-effort)
-    if is_paid and getattr(result.audit, "artifacts", None):
+    if getattr(result.audit, "artifacts", None):
         with st.expander("v0.8.1 Artifacts (Evidence / Claims / Narrative)", expanded=False):
             st.json(result.audit.artifacts)
 
@@ -216,11 +235,6 @@ def render_agentic_analysis(role: str | None = None) -> None:
     # -------------------------
     # v0.9.0: Optional LLM Analyst (read-only)
     # -------------------------
-    if not is_paid:
-        st.markdown("---")
-        st.info("Optional LLM Analyst is available only for authenticated User/Admin accounts.")
-        return
-
     st.markdown("---")
     st.markdown("### Optional LLM Analyst (v0.9.0)")
     st.caption(
@@ -314,10 +328,7 @@ def render_agentic_analysis(role: str | None = None) -> None:
                     user_question=user_question,
                 )
                 st.success("LLM report generated and appended to run.json")
-                rendered_llm = apply_output_policy(content=rep.output_markdown, role=role)
-                if rendered_llm.truncated:
-                    st.warning(rendered_llm.notice)
-                st.markdown(rendered_llm.content)
+                st.markdown(rep.output_markdown)
                 with st.expander("LLM Report JSON", expanded=False):
                     st.json(rep.output_json)
                 with st.expander("LLM Audit", expanded=False):
