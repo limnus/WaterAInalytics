@@ -1,9 +1,10 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
 from typing import Any, Dict, List, Tuple
 
 from core.llm_analysis.forecast_integration.models import ForecastContext
+
+from .quantitative_brief import build_quantitative_forecast_brief
 
 
 def _confidence_from_uncertainty(unc: str) -> str:
@@ -35,13 +36,14 @@ def _pick_anchor_ids(claims: List[Dict[str, Any]], evidence: List[Dict[str, Any]
     evidence_ids = [ev_id] if ev_id else []
     return claim_ids, evidence_ids
 
-def _fmt_num(x: Any) -> str:
-    if x is None:
-        return ""
+
+def _score(c: Dict[str, Any]) -> float:
+    v = c.get("support_score")
     try:
-        return f"{float(x):.3g}"
+        return float(v)
     except Exception:
-        return str(x)
+        return 0.0
+
 
 def build_deterministic_llm_report(
     *,
@@ -52,71 +54,80 @@ def build_deterministic_llm_report(
     user_question: str | None,
 ) -> Dict[str, Any]:
     anchor_claim_ids, anchor_evidence_ids = _pick_anchor_ids(claims, evidence)
+    quantitative = build_quantitative_forecast_brief(forecast_ctx)
 
-    # Executive summary grounded on CCE if present
     cci = None
     status = None
     if isinstance(context_consistency, dict):
         cci = context_consistency.get("cci")
         status = context_consistency.get("status")
 
-    station = forecast_ctx.station_id
-    param = forecast_ctx.parameter
-
-    parts: List[str] = []
+    summary_parts: List[str] = [quantitative["executive_summary"]]
     if isinstance(cci, (int, float)) and status:
-        parts.append(f"Context Consistency Index (CCI)={cci:.2f} → {status}.")
-    parts.append(f"Station={station}, Parameter={param}.")
+        summary_parts.append(f"Context Consistency Index (CCI)={cci:.2f} → {status}.")
     if user_question and user_question.strip():
-        parts.append("Focus: " + user_question.strip())
-    executive_summary = " ".join(parts)
+        summary_parts.append("Focus: " + user_question.strip())
+    executive_summary = " ".join(part.strip() for part in summary_parts if part and str(part).strip())
 
-    # Key findings: derive from top claims by support_score
-    def _score(c: Dict[str, Any]) -> float:
-        v = c.get("support_score")
-        try:
-            return float(v)
-        except Exception:
-            return 0.0
-
-    sorted_claims = sorted([c for c in claims if isinstance(c, dict)], key=_score, reverse=True)[:3]
     key_findings: List[Dict[str, Any]] = []
-    for i, c in enumerate(sorted_claims):
-        cid = (c.get("claim_id") or "").strip()
-        eids = c.get("evidence_ids") or []
-        eids = [x for x in eids if isinstance(x, str)]
-        txt = (c.get("text") or "").strip()
-        if not txt:
+    for i, text in enumerate(quantitative.get("key_findings") or [], start=1):
+        if not text:
             continue
-        key_findings.append({
-            "id": f"kf_{i+1:03d}",
-            "text": txt,
-            "claim_ids": [cid] if cid else anchor_claim_ids,
-            "evidence_ids": eids if eids else anchor_evidence_ids,
-            "confidence": _confidence_from_uncertainty(str(c.get("uncertainty_level") or "")),
-        })
-
-    # Forecast interpretation: minimal, but always anchored
-    last_y = forecast_ctx.recent_history.y[-1] if forecast_ctx.recent_history.y else None
-    next_h = forecast_ctx.horizons[0] if forecast_ctx.horizons else None
-    if next_h is not None and last_y is not None:
-        txt = (
-            f"Next-hour forecast y_hat={_fmt_num(next_h.y_hat)} "
-            f"compared to last observed y={_fmt_num(last_y)}; "
-            f"PI≈[{_fmt_num(next_h.p05)}, {_fmt_num(next_h.p95)}]."
+        key_findings.append(
+            {
+                "id": f"kf_{i:03d}",
+                "text": text,
+                "claim_ids": anchor_claim_ids,
+                "evidence_ids": anchor_evidence_ids,
+                "confidence": "MED",
+            }
         )
-    else:
-        txt = "Forecast output available, but insufficient recent history to compare trends."
 
-    forecast_interpretation = [{
-        "id": "fi_001",
-        "text": txt,
-        "claim_ids": anchor_claim_ids,
-        "evidence_ids": anchor_evidence_ids,
-        "confidence": "MED",
-    }]
+    remaining_slots = max(0, 4 - len(key_findings))
+    sorted_claims = sorted([c for c in claims if isinstance(c, dict)], key=_score, reverse=True)[:remaining_slots]
+    for idx, claim in enumerate(sorted_claims, start=len(key_findings) + 1):
+        cid = (claim.get("claim_id") or "").strip()
+        text = (claim.get("text") or "").strip()
+        if not text:
+            continue
+        eids = [x for x in (claim.get("evidence_ids") or []) if isinstance(x, str)]
+        key_findings.append(
+            {
+                "id": f"kf_{idx:03d}",
+                "text": text,
+                "claim_ids": [cid] if cid else anchor_claim_ids,
+                "evidence_ids": eids if eids else anchor_evidence_ids,
+                "confidence": _confidence_from_uncertainty(str(claim.get("uncertainty_level") or "")),
+            }
+        )
 
-    # Limitations: summarize evidence quality flags
+    forecast_interpretation: List[Dict[str, Any]] = []
+    for i, text in enumerate(quantitative.get("forecast_interpretation") or [], start=1):
+        if not text:
+            continue
+        forecast_interpretation.append(
+            {
+                "id": f"fi_{i:03d}",
+                "text": text,
+                "claim_ids": anchor_claim_ids,
+                "evidence_ids": anchor_evidence_ids,
+                "confidence": "MED",
+            }
+        )
+
+    limitations: List[Dict[str, Any]] = []
+    for i, text in enumerate(quantitative.get("limitations") or [], start=1):
+        if not text:
+            continue
+        limitations.append(
+            {
+                "id": f"lim_{i:03d}",
+                "text": text,
+                "claim_ids": anchor_claim_ids,
+                "evidence_ids": anchor_evidence_ids,
+            }
+        )
+
     counts: Dict[str, int] = {}
     for e in evidence:
         if not isinstance(e, dict):
@@ -125,21 +136,24 @@ def build_deterministic_llm_report(
             if isinstance(fl, str) and fl:
                 counts[fl] = counts.get(fl, 0) + 1
 
-    limitations: List[Dict[str, Any]] = []
-    for i, (issue, cnt) in enumerate(sorted(counts.items(), key=lambda x: (-x[1], x[0]))[:6]):
-        limitations.append({
-            "id": f"lim_{i+1:03d}",
-            "text": "",
-            "issue": issue,
-            "count": int(cnt),
-            "claim_ids": anchor_claim_ids,
-            "evidence_ids": anchor_evidence_ids,
-        })
+    offset = len(limitations)
+    for j, (issue, cnt) in enumerate(sorted(counts.items(), key=lambda x: (-x[1], x[0]))[:6], start=1):
+        limitations.append(
+            {
+                "id": f"lim_{offset + j:03d}",
+                "text": f"Evidence quality flag '{issue}' appeared {int(cnt)} time(s) in the collected context.",
+                "issue": issue,
+                "count": int(cnt),
+                "claim_ids": anchor_claim_ids,
+                "evidence_ids": anchor_evidence_ids,
+            }
+        )
 
-    open_questions = [{
-        "id": "q_001",
-        "text": "Would additional locally-relevant hydrometeorological context improve interpretation of forecast uncertainty?",
-    }]
+    open_questions = [
+        {"id": f"q_{i:03d}", "text": text}
+        for i, text in enumerate(quantitative.get("open_questions") or [], start=1)
+        if text
+    ]
 
     return {
         "executive_summary": executive_summary,
@@ -147,4 +161,5 @@ def build_deterministic_llm_report(
         "forecast_interpretation": forecast_interpretation,
         "limitations": limitations,
         "open_questions": open_questions,
+        "quantitative_brief": quantitative,
     }

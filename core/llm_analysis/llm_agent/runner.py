@@ -273,6 +273,7 @@ def run_llm_analyst(
                 user=user_msg,
                 schema_hint=schema_hint,
                 temperature=0.0,
+                timeout_s=llm_cfg.ollama_timeout_s,
             )
 
         elif llm_cfg.provider == "openai":

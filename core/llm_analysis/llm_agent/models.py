@@ -31,18 +31,25 @@ class LLMConfig:
     # Hard guardrails
     temperature: float = 0.0
     max_output_chars: int = 24_000
+    ollama_timeout_s: int = 60
 
     @staticmethod
     def from_env(provider: LLMProvider, model: str) -> "LLMConfig":
         ollama_base_url = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434").strip()
         openai_base_url = os.getenv("OPENAI_BASE_URL", "https://api.openai.com").strip()
         openai_api_key = os.getenv("OPENAI_API_KEY", "").strip()
+        try:
+            ollama_timeout_s = int(os.getenv("OLLAMA_TIMEOUT_S", "60").strip() or "60")
+        except ValueError:
+            ollama_timeout_s = 60
+        ollama_timeout_s = max(5, min(600, ollama_timeout_s))
         return LLMConfig(
             provider=provider,
             model=(model or "").strip(),
             ollama_base_url=ollama_base_url,
             openai_base_url=openai_base_url,
             openai_api_key=openai_api_key,
+            ollama_timeout_s=ollama_timeout_s,
         )
 
 
