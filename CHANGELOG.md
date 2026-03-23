@@ -7,7 +7,36 @@ Versioning follows semantic versioning principles where applicable.
 
 ---
 
-## [0.6.0] – 2026-02-15
+## [0.9.3] - 2026-03-23
+Title: Article-hardening cycle (consolidation in progress)
+
+### Added
+- Centralized runtime configuration via `.env`-backed settings.
+- Admin reset path without hard-coded secret.
+- Functional Admin Users management flow.
+- Playground output truncation with configurable ratio.
+- Standardized forecasting output schema and structured `forecast_run.json` artifact.
+- Deterministic quantitative forecast brief.
+- Ollama model discovery and clearer local-LLM error handling.
+- Official station-context enrichment with cached USGS/Census/NWS metadata.
+- Visible presentation modes for Agentic Analysis output.
+- Reproducibility/runbook/freeze documentation for the article-ready cycle.
+- Release documentation regression test.
+
+### Changed
+- Forecasting → Agentic Analysis hand-off hardened for multi-station use.
+- Agentic Analysis UI simplified to reduce overlapping controls.
+- README and architecture documentation updated to match the real system.
+- Line-ending policy documented through `.gitattributes`.
+- App version aligned to `v0.9.3`.
+
+### Notes
+- `v0.9.3` remains the active hardening line until the final consolidated tag is cut.
+- Deterministic analysis is the baseline article method; LLM refinement remains optional.
+
+---
+
+## [0.6.0] - 2026-02-15
 Commit: c4d3dd0  
 Tag: v0.6.0  
 Title: Agentic AI Forecasting Analysis MVP
@@ -40,15 +69,9 @@ Title: Agentic AI Forecasting Analysis MVP
 - Version bumped to 0.6.0.
 - UI adjustments for report tone and extended layout.
 
-### Technical Scope
-- 35 files changed
-- ~1460 insertions
-- Full modular LLM-analysis subsystem introduced
-- No breaking changes to forecasting architecture (v0.5.x preserved)
-
 ---
 
-## [0.5.0] – 2026-02-12
+## [0.5.0] - 2026-02-12
 Title: Final Forecasting Architecture
 
 ### Added
@@ -56,15 +79,12 @@ Title: Final Forecasting Architecture
 - Chronos Bolt / Chronos T5 support
 - Admin/User model gating
 - Gaussian prediction intervals (80%)
-- Multi-horizon forecasting (H=1–3)
+- Multi-horizon forecasting (H=1-3)
 - Refactored PlayGround forecasting workflow
-
-### Notes
-- Consolidated forecasting architecture prior to LLM integration.
 
 ---
 
-## [0.3.0] – 2026-02-10
+## [0.3.0] - 2026-02-10
 ### Added
 - Forecasting UI
 - Persistence model with noise parameter
@@ -73,20 +93,14 @@ Title: Final Forecasting Architecture
 
 ---
 
-## [0.2.0] – 2026-01-09
+## [0.2.0] - 2026-01-09
 ### Finalized
 - Water AInalytics US data acquisition
 - Explorer & Map stabilization
 
 ---
 
-## [0.1.0] – 2026-01-08
+## [0.1.0] - 2026-01-08
 ### Initial Release
 - Explorer & Map MVP
 - Core project bootstrap
-
----
-
-## Pre-release
-### 2026-01-05
-- Project skeleton bootstrap
