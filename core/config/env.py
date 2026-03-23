@@ -70,6 +70,8 @@ class RuntimeSettings:
     station_context_enrichment_enabled: bool
     station_context_timeout_s: int
     station_context_cache_days: int
+    agentic_execution_log_enabled: bool
+    agentic_stage_slow_threshold_ms: int
 
 
 def _get_float(name: str, default: float, *, min_value: float, max_value: float) -> float:
@@ -132,5 +134,12 @@ def get_runtime_settings() -> RuntimeSettings:
             14,
             min_value=1,
             max_value=180,
+        ),
+        agentic_execution_log_enabled=_get_bool("AGENTIC_EXECUTION_LOG_ENABLED", True),
+        agentic_stage_slow_threshold_ms=_get_int(
+            "AGENTIC_STAGE_SLOW_THRESHOLD_MS",
+            8000,
+            min_value=500,
+            max_value=300000,
         ),
     )

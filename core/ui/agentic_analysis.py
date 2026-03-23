@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import os
 import tempfile
+import time
 from dataclasses import replace
 from pathlib import Path
 
@@ -14,6 +15,13 @@ import streamlit as st
 
 from core.config import get_runtime_settings
 from core.context_enrichment import enrich_us_station_context, get_station_context_markdown
+from core.ui.agentic_observability import (
+    append_agentic_execution_log,
+    build_agentic_execution_record,
+    finalize_stage,
+    start_stage,
+    summarize_stage_timings,
+)
 from core.ui.agentic_presentation import (
     PRESENTATION_OPTIONS,
     normalize_focus_text,
@@ -50,6 +58,8 @@ def render_agentic_analysis(role: str | None = None) -> None:
     st.session_state.setdefault("agentic_forecast_ctx", None)
     st.session_state.setdefault("latest_agentic_run_path", None)
     st.session_state.setdefault("agentic_station_context", None)
+    st.session_state.setdefault("agentic_is_running", False)
+    st.session_state.setdefault("agentic_last_execution", None)
 
     # LLM widget state
     st.session_state.setdefault("llm_provider_label", "OFF (deterministic)")
@@ -192,51 +202,161 @@ def render_agentic_analysis(role: str | None = None) -> None:
         },
     )
 
-    if st.button("Run Agentic Analysis", type="primary"):
-        forecast_ctx = forecast_output_to_context(
-            forecast_output,
-            history_df,
-        )
+    run_clicked = st.button(
+        "Run Agentic Analysis",
+        type="primary",
+        disabled=bool(st.session_state.get("agentic_is_running")),
+        help="Builds the deterministic analysis first, then saves execution telemetry for troubleshooting.",
+    )
 
-        cache_root = Path(tempfile.gettempdir())
+    if st.session_state.get("agentic_is_running"):
+        st.info("Agentic Analysis is already running. Please wait for the current execution to finish.")
 
+    if run_clicked:
+        if st.session_state.get("agentic_is_running"):
+            st.warning("A previous Agentic Analysis execution is still marked as running. Please wait and try again.")
+            return
+
+        st.session_state["agentic_is_running"] = True
+        stage_events = []
+        execution_warnings = []
         station_context = None
-        if include_station_context:
-            with st.spinner("Resolving official station context (USGS / Census / NWS)..."):
-                station_context = enrich_us_station_context(
-                    forecast_ctx.station_id,
-                    timeout_s=settings.station_context_timeout_s,
-                    cache_ttl_days=settings.station_context_cache_days,
-                    force_refresh=force_refresh,
-                )
-            forecast_meta = dict(forecast_ctx.meta or {}) if isinstance(forecast_ctx.meta, dict) else {}
-            forecast_meta["official_station_context"] = station_context
-            forecast_ctx = replace(forecast_ctx, meta=forecast_meta)
-
-        result = run_analysis(
-            cfg=cfg,
-            forecast_ctx=forecast_ctx,
-            cache_root=cache_root,
-        )
-
-        st.session_state["agentic_result"] = result
-        st.session_state["agentic_forecast_ctx"] = forecast_ctx
-        st.session_state["agentic_station_context"] = station_context
+        forecast_ctx = None
+        result = None
+        cache_root = Path(tempfile.gettempdir())
+        status_box = st.status("Starting Agentic Analysis...", expanded=True) if hasattr(st, "status") else None
+        stage_start_total = time.perf_counter()
 
         try:
-            run_date_local = forecast_ctx.run_datetime_utc.date().isoformat()
-            run_path = (
-                cache_root
-                / "agentic_analysis"
-                / forecast_ctx.station_id
-                / forecast_ctx.parameter
-                / run_date_local
-                / result.cache_key
-                / "run.json"
+            build_stage = start_stage("build_forecast_context")
+            if status_box is not None:
+                status_box.update(label="Building forecast context from the latest forecast run...", state="running")
+            forecast_ctx = forecast_output_to_context(
+                forecast_output,
+                history_df,
             )
-            st.session_state["latest_agentic_run_path"] = str(run_path)
-        except Exception:
-            st.session_state["latest_agentic_run_path"] = None
+            stage_events.append(finalize_stage(build_stage, detail=f"station={forecast_ctx.station_id}"))
+
+            if include_station_context:
+                context_stage = start_stage("station_context_enrichment")
+                if status_box is not None:
+                    status_box.update(label="Resolving official station context (USGS / Census / NWS)...", state="running")
+                try:
+                    station_context = enrich_us_station_context(
+                        forecast_ctx.station_id,
+                        timeout_s=settings.station_context_timeout_s,
+                        cache_ttl_days=settings.station_context_cache_days,
+                        force_refresh=force_refresh,
+                    )
+                    detail = station_context.get("census", {}).get("status") or "ok"
+                    stage_events.append(finalize_stage(context_stage, detail=f"status={detail}"))
+                except Exception as exc:
+                    execution_warnings.append(
+                        f"Official station context enrichment failed and was skipped: {type(exc).__name__}: {exc}"
+                    )
+                    stage_events.append(finalize_stage(context_stage, status="warning", detail=type(exc).__name__))
+                    station_context = {
+                        "station_id": forecast_ctx.station_id,
+                        "enabled": False,
+                        "narrative": {
+                            "key_findings": [],
+                            "limitations": [execution_warnings[-1]],
+                            "open_questions": [],
+                        },
+                    }
+
+                forecast_meta = dict(forecast_ctx.meta or {}) if isinstance(forecast_ctx.meta, dict) else {}
+                forecast_meta["official_station_context"] = station_context
+                forecast_ctx = replace(forecast_ctx, meta=forecast_meta)
+
+            analysis_stage = start_stage("deterministic_agentic_pipeline")
+            if status_box is not None:
+                status_box.update(label="Running deterministic agentic pipeline and assembling audit artifacts...", state="running")
+            result = run_analysis(
+                cfg=cfg,
+                forecast_ctx=forecast_ctx,
+                cache_root=cache_root,
+            )
+            stage_events.append(finalize_stage(analysis_stage, detail=f"cache_key={result.cache_key}"))
+
+            persist_stage = start_stage("persist_session_state")
+            st.session_state["agentic_result"] = result
+            st.session_state["agentic_forecast_ctx"] = forecast_ctx
+            st.session_state["agentic_station_context"] = station_context
+
+            try:
+                run_date_local = forecast_ctx.run_datetime_utc.date().isoformat()
+                run_path = (
+                    cache_root
+                    / "agentic_analysis"
+                    / forecast_ctx.station_id
+                    / forecast_ctx.parameter
+                    / run_date_local
+                    / result.cache_key
+                    / "run.json"
+                )
+                st.session_state["latest_agentic_run_path"] = str(run_path)
+            except Exception:
+                st.session_state["latest_agentic_run_path"] = None
+            stage_events.append(finalize_stage(persist_stage, detail="session_state_updated"))
+
+            timing_summary = summarize_stage_timings(stage_events)
+            if timing_summary.get("slowest_stage") and timing_summary["slowest_stage"].get("duration_ms", 0) >= settings.agentic_stage_slow_threshold_ms:
+                execution_warnings.append(
+                    f"Slowest stage was {timing_summary['slowest_stage']['stage']} at {timing_summary['slowest_stage']['duration_ms']} ms."
+                )
+
+            execution_record = build_agentic_execution_record(
+                role=role,
+                station_id=forecast_ctx.station_id,
+                execution_surface="authenticated" if is_paid else "playground",
+                include_station_context=include_station_context,
+                force_refresh=force_refresh,
+                focus_text_present=bool(normalize_focus_text(focus_text)),
+                status="ok",
+                timing_summary=timing_summary,
+                warnings=execution_warnings,
+            )
+            if settings.agentic_execution_log_enabled:
+                log_path = append_agentic_execution_log(execution_record)
+                execution_record["log_path"] = str(log_path)
+            execution_record["total_wall_clock_ms"] = int(round((time.perf_counter() - stage_start_total) * 1000.0))
+            st.session_state["agentic_last_execution"] = execution_record
+
+            if status_box is not None:
+                status_box.update(label="Agentic Analysis completed.", state="complete")
+            if execution_warnings:
+                for warning in execution_warnings:
+                    st.warning(warning)
+        except Exception as exc:
+            if forecast_ctx is not None:
+                station_id_for_log = forecast_ctx.station_id
+            else:
+                station_id_for_log = forecast_output.station_id
+            timing_summary = summarize_stage_timings(stage_events)
+            execution_record = build_agentic_execution_record(
+                role=role,
+                station_id=station_id_for_log,
+                execution_surface="authenticated" if is_paid else "playground",
+                include_station_context=include_station_context,
+                force_refresh=force_refresh,
+                focus_text_present=bool(normalize_focus_text(focus_text)),
+                status="error",
+                timing_summary=timing_summary,
+                warnings=execution_warnings,
+                error=f"{type(exc).__name__}: {exc}",
+            )
+            if settings.agentic_execution_log_enabled:
+                log_path = append_agentic_execution_log(execution_record)
+                execution_record["log_path"] = str(log_path)
+            execution_record["total_wall_clock_ms"] = int(round((time.perf_counter() - stage_start_total) * 1000.0))
+            st.session_state["agentic_last_execution"] = execution_record
+            if status_box is not None:
+                status_box.update(label="Agentic Analysis failed.", state="error")
+            st.error(f"Agentic Analysis failed: {type(exc).__name__}: {exc}")
+            return
+        finally:
+            st.session_state["agentic_is_running"] = False
 
     result = st.session_state.get("agentic_result")
     forecast_ctx = st.session_state.get("agentic_forecast_ctx")
@@ -244,6 +364,17 @@ def render_agentic_analysis(role: str | None = None) -> None:
     if result is None or forecast_ctx is None:
         st.info("Run the analysis to generate the report and audit artifacts.")
         return
+
+    execution_record = st.session_state.get("agentic_last_execution")
+    if isinstance(execution_record, dict):
+        st.markdown("### Execution Telemetry")
+        slowest_stage = ((execution_record.get("timing") or {}).get("slowest_stage") or {})
+        if slowest_stage:
+            st.caption(
+                f"Last run surface: {execution_record.get('execution_surface')} | "
+                f"slowest stage: {slowest_stage.get('stage')} ({slowest_stage.get('duration_ms')} ms)"
+            )
+        st.json(execution_record)
 
     focus_text = normalize_focus_text(st.session_state.get("agentic_focus_text"))
     brief_format = presentation["brief_format"] if isinstance(presentation, dict) else "structured"
