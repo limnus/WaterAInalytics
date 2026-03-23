@@ -159,3 +159,15 @@ The following remain intentionally constrained:
 - web/context enrichment must degrade safely if remote services are unavailable;
 - broad geologic/land-cover enrichment is not yet part of the current frozen scope;
 - the Agentic Analysis tab still has a future UX backlog item to unify all analysis actions behind a single final execution flow.
+
+
+## Release Validation
+
+Run the machine-readable release smoke checks before creating the consolidated release tag:
+
+```bash
+python run_release_checks.py
+```
+
+The JSON report is written to `artifacts/release_checks/release_check_report.json`.
+

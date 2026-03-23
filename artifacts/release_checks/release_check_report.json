@@ -1,0 +1,132 @@
+{
+  "summary": {
+    "passed": true,
+    "missing_required_files": [],
+    "import_failures": [],
+    "required_file_count": 10,
+    "checked_import_count": 6
+  },
+  "manifest": {
+    "app_version": "v0.9.3",
+    "generated_at_utc": "2026-03-23T11:21:34.059193+00:00",
+    "project_root": "G:\\Meu Drive\\AI Code\\WaterAInalytics",
+    "python": {
+      "version": "3.13.12",
+      "implementation": "CPython",
+      "executable": ""
+    },
+    "forecast_models": {
+      "supported_model_keys": [
+        "persistence",
+        "ridge",
+        "chronos-tiny",
+        "chronos-mini",
+        "chronos-base",
+        "chronos-large"
+      ],
+      "deterministic_outputs_schema": "forecast_run.json + forecast.csv"
+    },
+    "agentic_analysis": {
+      "deterministic_quantitative_brief": true,
+      "official_station_context_enrichment": true,
+      "optional_llm_refinement": true,
+      "playground_output_truncation": true
+    },
+    "runtime_settings": {
+      "session_timeout_minutes": 120,
+      "playground_report_truncation_ratio": 0.4,
+      "station_context_enrichment_enabled": true,
+      "station_context_timeout_s": 15,
+      "station_context_cache_days": 14,
+      "auth_admin_initial_password_present": true,
+      "auth_admin_reset_password_present": true
+    },
+    "files": {
+      "required": [
+        {
+          "path": "README.md",
+          "exists": true
+        },
+        {
+          "path": "CHANGELOG.md",
+          "exists": true
+        },
+        {
+          "path": ".env.example",
+          "exists": true
+        },
+        {
+          "path": ".gitattributes",
+          "exists": true
+        },
+        {
+          "path": "app.py",
+          "exists": true
+        },
+        {
+          "path": "run_pipeline.py",
+          "exists": true
+        },
+        {
+          "path": "docs/design/architecture.md",
+          "exists": true
+        },
+        {
+          "path": "docs/REPRODUCIBILITY_v0.9.3.md",
+          "exists": true
+        },
+        {
+          "path": "docs/RUNBOOK_v0.9.3.md",
+          "exists": true
+        },
+        {
+          "path": "docs/CODE_FREEZE_CHECKLIST_v0.9.3.md",
+          "exists": true
+        }
+      ],
+      "missing": [],
+      "optional": [
+        {
+          "path": "data/usgs_00060_00065_base_from_ts_metadata.csv",
+          "exists": true,
+          "purpose": "official station context enrichment seed table"
+        }
+      ]
+    }
+  },
+  "imports": {
+    "modules": [
+      {
+        "module": "core.version",
+        "ok": true,
+        "error": null
+      },
+      {
+        "module": "core.config",
+        "ok": true,
+        "error": null
+      },
+      {
+        "module": "core.release.manifest",
+        "ok": true,
+        "error": null
+      },
+      {
+        "module": "core.llm_analysis.forecast_integration.adapter",
+        "ok": true,
+        "error": null
+      },
+      {
+        "module": "core.llm_analysis.llm_agent.quantitative_brief",
+        "ok": true,
+        "error": null
+      },
+      {
+        "module": "core.context_enrichment.official_us_context",
+        "ok": true,
+        "error": null
+      }
+    ],
+    "failures": []
+  }
+}
