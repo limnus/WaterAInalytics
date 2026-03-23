@@ -67,6 +67,9 @@ class RuntimeSettings:
     auth_admin_reset_password: str
     playground_report_truncation_ratio: float
     session_timeout_minutes: int
+    station_context_enrichment_enabled: bool
+    station_context_timeout_s: int
+    station_context_cache_days: int
 
 
 def _get_float(name: str, default: float, *, min_value: float, max_value: float) -> float:
@@ -79,6 +82,14 @@ def _get_float(name: str, default: float, *, min_value: float, max_value: float)
         return default
     return max(min_value, min(max_value, value))
 
+
+
+
+def _get_bool(name: str, default: bool) -> bool:
+    raw = os.getenv(name, "").strip().lower()
+    if not raw:
+        return default
+    return raw in ("1", "true", "yes", "on")
 
 def _get_int(name: str, default: int, *, min_value: int, max_value: int) -> int:
     raw = os.getenv(name, "").strip()
@@ -108,5 +119,18 @@ def get_runtime_settings() -> RuntimeSettings:
             60,
             min_value=5,
             max_value=24 * 60,
+        ),
+        station_context_enrichment_enabled=_get_bool("STATION_CONTEXT_ENRICHMENT_ENABLED", True),
+        station_context_timeout_s=_get_int(
+            "STATION_CONTEXT_TIMEOUT_S",
+            15,
+            min_value=3,
+            max_value=120,
+        ),
+        station_context_cache_days=_get_int(
+            "STATION_CONTEXT_CACHE_DAYS",
+            14,
+            min_value=1,
+            max_value=180,
         ),
     )

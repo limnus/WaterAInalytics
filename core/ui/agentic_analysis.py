@@ -12,6 +12,8 @@ from pathlib import Path
 
 import streamlit as st
 
+from core.config import get_runtime_settings
+from core.context_enrichment import enrich_us_station_context, get_station_context_markdown
 from core.llm_analysis.config import AnalysisConfig, PagePolicy, ReportStyle
 from core.llm_analysis.forecast_integration.adapter import forecast_output_to_context
 from core.llm_analysis.llm_agent import LLMConfig, run_llm_analyst
@@ -42,6 +44,7 @@ def render_agentic_analysis(role: str | None = None) -> None:
     st.session_state.setdefault("agentic_result", None)
     st.session_state.setdefault("agentic_forecast_ctx", None)
     st.session_state.setdefault("latest_agentic_run_path", None)
+    st.session_state.setdefault("agentic_station_context", None)
 
     # LLM widget state
     st.session_state.setdefault("llm_provider_label", "OFF (deterministic)")
@@ -51,6 +54,8 @@ def render_agentic_analysis(role: str | None = None) -> None:
     st.session_state.setdefault("openai_base_url", _env_or_default("OPENAI_BASE_URL", "https://api.openai.com"))
     st.session_state.setdefault("openai_api_key_override", "")
     st.session_state.setdefault("llm_user_question", "")
+
+    settings = get_runtime_settings()
 
     # --- Controls ---
     if is_paid:
@@ -75,6 +80,12 @@ def render_agentic_analysis(role: str | None = None) -> None:
             value="",
             height=110,
             placeholder="Optional. Will be used in future versions. Avoid secrets.",
+        )
+
+        include_station_context = st.toggle(
+            "Enrich with official station context",
+            value=settings.station_context_enrichment_enabled,
+            help="Uses official USGS, Census, and NWS endpoints with caching when station coordinates are available.",
         )
 
         exec_mode = st.radio(
@@ -108,6 +119,12 @@ def render_agentic_analysis(role: str | None = None) -> None:
             disabled=True,
             placeholder="Enabled for User/Admin. In future versions this will feed the LLM (with injection protection).",
         )
+        st.toggle(
+            "Enrich with official station context",
+            value=settings.station_context_enrichment_enabled,
+            disabled=True,
+            help="Playground follows the project default for official station context enrichment.",
+        )
         st.radio(
             "Execution mode",
             options=["Use cache (if available)", "Force refresh (recompute)"],
@@ -121,6 +138,7 @@ def render_agentic_analysis(role: str | None = None) -> None:
         user_instructions = ""
         use_cache = True
         force_refresh = False
+        include_station_context = settings.station_context_enrichment_enabled
 
     # --- Check forecast availability ---
     analysis_inputs = st.session_state.get("latest_forecast_analysis_inputs") or {}
@@ -172,6 +190,19 @@ def render_agentic_analysis(role: str | None = None) -> None:
 
         cache_root = Path(tempfile.gettempdir())
 
+        station_context = None
+        if include_station_context:
+            with st.spinner("Resolving official station context (USGS / Census / NWS)..."):
+                station_context = enrich_us_station_context(
+                    forecast_ctx.station_id,
+                    timeout_s=settings.station_context_timeout_s,
+                    cache_ttl_days=settings.station_context_cache_days,
+                    force_refresh=force_refresh,
+                )
+            forecast_meta = dict(forecast_ctx.meta or {}) if isinstance(forecast_ctx.meta, dict) else {}
+            forecast_meta["official_station_context"] = station_context
+            forecast_ctx = replace(forecast_ctx, meta=forecast_meta)
+
         result = run_analysis(
             cfg=cfg,
             forecast_ctx=forecast_ctx,
@@ -180,6 +211,7 @@ def render_agentic_analysis(role: str | None = None) -> None:
 
         st.session_state["agentic_result"] = result
         st.session_state["agentic_forecast_ctx"] = forecast_ctx
+        st.session_state["agentic_station_context"] = station_context
 
         try:
             run_date_local = forecast_ctx.run_datetime_utc.date().isoformat()
@@ -213,11 +245,21 @@ def render_agentic_analysis(role: str | None = None) -> None:
     )
     quantitative_brief = build_quantitative_forecast_brief(forecast_ctx)
     st.markdown(render_quantitative_brief_markdown(quantitative_brief))
+
+    station_context = st.session_state.get("agentic_station_context")
+    if isinstance(station_context, dict):
+        st.markdown("### Official Station Context (v0.9.3)")
+        st.caption(
+            "Deterministic station enrichment from official USGS, Census, and NWS services, cached locally when available."
+        )
+        st.markdown(get_station_context_markdown(station_context))
+
     with st.expander("Quantitative brief statistics", expanded=False):
         st.json(
             {
                 "history_stats": quantitative_brief.get("history_stats"),
                 "forecast_stats": quantitative_brief.get("forecast_stats"),
+                "official_station_context": quantitative_brief.get("official_station_context"),
             }
         )
 

@@ -79,6 +79,11 @@ def _build_llm_payload(run_obj: Dict[str, Any], forecast_ctx: ForecastContext) -
         "station": {
             "station_id": forecast_ctx.station_id,
             "parameter": forecast_ctx.parameter,
+            "official_station_context": (
+                (forecast_ctx.meta or {}).get("official_station_context")
+                if isinstance(forecast_ctx.meta, dict)
+                else None
+            ),
         },
         "forecast": _forecast_summary(forecast_ctx),
         "evidence": {

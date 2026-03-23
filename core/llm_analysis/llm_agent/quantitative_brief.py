@@ -189,6 +189,14 @@ def _forecast_stats(forecast_ctx: ForecastContext, history_stats: Dict[str, Any]
     }
 
 
+
+
+def _station_context_from_meta(forecast_ctx: ForecastContext) -> Dict[str, Any]:
+    meta = forecast_ctx.meta if isinstance(forecast_ctx.meta, dict) else {}
+    ctx = meta.get("official_station_context") if isinstance(meta, dict) else None
+    return ctx if isinstance(ctx, dict) else {}
+
+
 def build_quantitative_forecast_brief(forecast_ctx: ForecastContext) -> Dict[str, Any]:
     hstats = _history_stats(forecast_ctx)
     fstats = _forecast_stats(forecast_ctx, hstats)
@@ -200,6 +208,10 @@ def build_quantitative_forecast_brief(forecast_ctx: ForecastContext) -> Dict[str
     recent_std = hstats["recent_std"]
     next_pred = fstats.get("first_pred")
 
+    station_context = _station_context_from_meta(forecast_ctx)
+    context_narrative = (station_context.get("narrative") or {}) if isinstance(station_context, dict) else {}
+    base_ctx = (station_context.get("base_context") or {}) if isinstance(station_context, dict) else {}
+
     executive_summary = (
         f"For station {station} and parameter {parameter}, the latest observed value is {_fmt_value(last_value)}. "
         f"Against the last {hstats['recent_window_points']} observations, the short-term behavior is {hstats['trend_label']} "
@@ -207,6 +219,11 @@ def build_quantitative_forecast_brief(forecast_ctx: ForecastContext) -> Dict[str
         f"The forecast over the next {fstats['horizon_count']} step(s) looks {fstats['direction_label']}, "
         f"starting at {_fmt_value(next_pred)}."
     )
+    if base_ctx.get("state_name") or base_ctx.get("hydrologic_unit_code"):
+        executive_summary += (
+            f" The station context currently points to state {base_ctx.get('state_name') or 'NA'} "
+            f"and HUC {base_ctx.get('hydrologic_unit_code') or 'NA'}."
+        )
 
     key_findings: List[str] = [
         (
@@ -227,6 +244,10 @@ def build_quantitative_forecast_brief(forecast_ctx: ForecastContext) -> Dict[str
             f"The latest observed point looks {hstats['anomaly_label']} relative to the recent window "
             f"(z-score = {_fmt_value(hstats['z_score'])})."
         )
+
+    for item in context_narrative.get("key_findings") or []:
+        if isinstance(item, str) and item.strip():
+            key_findings.append(item.strip())
 
     forecast_interpretation: List[str] = [
         (
@@ -253,13 +274,26 @@ def build_quantitative_forecast_brief(forecast_ctx: ForecastContext) -> Dict[str
         limitations.append(
             f"Only {hstats['history_points']} historical point(s) were available, so the recent-window statistics are based on a short sample."
         )
-    limitations.append(
-        "This quantitative brief is deterministic and data-grounded, but it does not yet incorporate local watershed, geological, meteorological, or land-use context."
-    )
+
+    if context_narrative.get("key_findings"):
+        limitations.extend([
+            item.strip()
+            for item in (context_narrative.get("limitations") or [])
+            if isinstance(item, str) and item.strip()
+        ])
+    else:
+        limitations.append(
+            "This quantitative brief is deterministic and data-grounded, but it does not yet incorporate local watershed, geological, meteorological, or land-use context."
+        )
 
     open_questions = [
         "Would adding trustworthy local hydro-meteorological and watershed context materially change the interpretation of the current forecast?"
     ]
+    open_questions.extend([
+        item.strip()
+        for item in (context_narrative.get("open_questions") or [])
+        if isinstance(item, str) and item.strip()
+    ])
 
     return {
         "station_id": station,
@@ -271,6 +305,7 @@ def build_quantitative_forecast_brief(forecast_ctx: ForecastContext) -> Dict[str
         "open_questions": open_questions,
         "history_stats": hstats,
         "forecast_stats": fstats,
+        "official_station_context": station_context or None,
     }
 
 

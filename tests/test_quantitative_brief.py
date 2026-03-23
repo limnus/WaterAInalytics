@@ -48,3 +48,32 @@ def test_quantitative_brief_is_grounded_and_renders_markdown():
     assert "#### Executive Summary" in md
     assert "#### Forecast Interpretation" in md
     assert "USGS-01013500" in md
+
+
+def test_quantitative_brief_includes_official_station_context_findings():
+    fc = _make_context()
+    fc = ForecastContext(
+        station_id=fc.station_id,
+        parameter=fc.parameter,
+        run_datetime_utc=fc.run_datetime_utc,
+        horizons=fc.horizons,
+        recent_history=fc.recent_history,
+        provenance=fc.provenance,
+        meta={
+            "official_station_context": {
+                "base_context": {"state_name": "Maine", "hydrologic_unit_code": "01030003"},
+                "narrative": {
+                    "key_findings": ["Approximate ground elevation at the monitoring point is 53.2 m above sea level."],
+                    "limitations": ["County-level geography could not be resolved from the Census geocoder for this station."],
+                    "open_questions": ["Would adding NLCD-derived land cover help here?"],
+                },
+            }
+        },
+    )
+
+    brief = build_quantitative_forecast_brief(fc)
+
+    assert "state Maine and HUC 01030003" in brief["executive_summary"]
+    assert any("53.2 m above sea level" in item for item in brief["key_findings"])
+    assert any("County-level geography" in item for item in brief["limitations"])
+    assert any("NLCD-derived land cover" in item for item in brief["open_questions"])
