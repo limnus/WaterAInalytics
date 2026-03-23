@@ -14,6 +14,7 @@ from pathlib import Path
 import streamlit as st
 
 from core.config import get_runtime_settings
+from core.article_demo import build_article_analysis_bundle_bytes
 from core.context_enrichment import enrich_us_station_context, get_station_context_markdown
 from core.ui.agentic_observability import (
     append_agentic_execution_log,
@@ -218,6 +219,7 @@ def render_agentic_analysis(role: str | None = None) -> None:
             return
 
         st.session_state["agentic_is_running"] = True
+        st.session_state["latest_llm_report"] = None
         stage_events = []
         execution_warnings = []
         station_context = None
@@ -385,7 +387,8 @@ def render_agentic_analysis(role: str | None = None) -> None:
         "No web search or external LLM call is needed for this section."
     )
     quantitative_brief = build_quantitative_forecast_brief(forecast_ctx)
-    st.markdown(render_quantitative_brief_markdown(quantitative_brief, format_style=brief_format, focus_text=focus_text))
+    quantitative_brief_markdown = render_quantitative_brief_markdown(quantitative_brief, format_style=brief_format, focus_text=focus_text)
+    st.markdown(quantitative_brief_markdown)
 
     with st.expander("Underlying deterministic source report", expanded=False):
         st.markdown(result.report.content)
@@ -397,6 +400,36 @@ def render_agentic_analysis(role: str | None = None) -> None:
             "Deterministic station enrichment from official USGS, Census, and NWS services, cached locally when available."
         )
         st.markdown(get_station_context_markdown(station_context))
+
+    latest_forecast_df = st.session_state.get("latest_forecast_df")
+    latest_forecast_run_artifact = st.session_state.get("latest_forecast_run_artifact")
+    latest_forecast_profile = st.session_state.get("latest_forecast_profile") or {}
+    latest_llm_report = st.session_state.get("latest_llm_report")
+
+    if latest_forecast_df is not None and latest_forecast_run_artifact:
+        st.markdown("### Article Export Bundle")
+        st.caption(
+            "Exports the reproducible artifacts for the current experiment: forecast table, run JSON, deterministic summary, context, and execution telemetry."
+        )
+        article_bundle = build_article_analysis_bundle_bytes(
+            forecast_df=latest_forecast_df,
+            forecast_run_artifact=latest_forecast_run_artifact,
+            quantitative_brief_markdown=quantitative_brief_markdown,
+            deterministic_report_markdown=result.report.content,
+            profile=latest_forecast_profile,
+            station_context=station_context if isinstance(station_context, dict) else None,
+            execution_telemetry=execution_record if isinstance(execution_record, dict) else None,
+            focus_text=focus_text,
+            presentation_label=presentation.get("label", "Narrative paragraph") if isinstance(presentation, dict) else "Narrative paragraph",
+            llm_report=latest_llm_report if isinstance(latest_llm_report, dict) else None,
+        )
+        st.download_button(
+            "Download article analysis bundle (ZIP)",
+            data=article_bundle,
+            file_name="article_analysis_bundle.zip",
+            mime="application/zip",
+            help="Includes the current forecast artifact, deterministic narrative, context enrichment, and execution telemetry for audit.",
+        )
 
     with st.expander("Quantitative brief statistics", expanded=False):
         st.json(
@@ -571,6 +604,16 @@ def render_agentic_analysis(role: str | None = None) -> None:
                     llm_cfg=llm_cfg,
                     user_question=focus_text,
                 )
+                st.session_state["latest_llm_report"] = {
+                    "provider": rep.provider,
+                    "model": rep.model,
+                    "schema_version": rep.schema_version,
+                    "created_at_utc": rep.created_at_utc,
+                    "input_hash": rep.input_hash,
+                    "prompt_hashes": rep.prompt_hashes,
+                    "output_json": rep.output_json,
+                    "output_markdown": rep.output_markdown,
+                }
                 st.success("LLM report generated and appended to run.json")
                 st.markdown(rep.output_markdown)
                 with st.expander("LLM Report JSON", expanded=False):

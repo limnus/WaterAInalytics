@@ -21,6 +21,8 @@ from core.forecast_models.output_schema import (
 from core.forecast_models.pi import gaussian_residual_pi
 from core.forecast_models.registry import create_model
 from core.forecast_models.paths import model_dir
+from core.article_demo import build_article_forecast_bundle_bytes, get_article_demo_profile
+from core.version import APP_VERSION
 
 from core.cache.get_station_timeseries import (
     _site_from_monitoring_location_id,
@@ -255,8 +257,23 @@ def render_forecasting(role: Optional[str] = None) -> None:
     st.markdown("### Forecasting")
 
     selected_ids = (st.session_state.get("explorer_selected_ids", []) or []).copy()
-    if not selected_ids:
-        st.info("Select at least one station in **Explorer & Map** to enable forecasting.")
+    article_profile = get_article_demo_profile()
+    article_mode_available = bool(article_profile and article_profile.station_ids)
+
+    if article_mode_available:
+        profile_choice = st.radio(
+            "Execution profile",
+            options=["Standard", f"Article / Reproducible Mode — {article_profile.name}"],
+            horizontal=True,
+            index=0,
+            key="fcst_execution_profile",
+        )
+        use_article_mode = profile_choice.startswith("Article / Reproducible Mode")
+    else:
+        use_article_mode = False
+
+    if not selected_ids and not use_article_mode:
+        st.info("Select at least one station in **Explorer & Map** to enable forecasting, or configure ARTICLE_DEMO_* variables for article mode.")
         return
 
     # Session seed (fixed for reproducibility in a session)
@@ -265,32 +282,42 @@ def render_forecasting(role: Optional[str] = None) -> None:
         st.session_state.session_seed = abs(hash(sid if sid is not None else "waterainalytics")) % (2**32 - 1)
     session_seed = int(st.session_state.session_seed)
 
-    # --- Controls ---
-    top1, top2 = st.columns([2, 1])
-    with top1:
-        scope = st.radio(
-            "Forecast scope",
-            options=["All selected stations", "Choose stations"],
-            horizontal=True,
-            index=0,
-            key="fcst_scope",
+    article_profile_dict = None
+    if use_article_mode and article_profile is not None:
+        station_ids = article_profile.station_ids
+        article_profile_dict = article_profile.to_dict()
+        st.info(
+            f"Article / Reproducible Mode is active. Using preset stations: {', '.join(article_profile.station_labels.get(s, s) for s in station_ids)}."
         )
-    with top2:
-        st.caption(f"Selected in Explorer: **{len(selected_ids)}**")
-
-    if scope == "Choose stations":
-        station_ids = st.multiselect(
-            "Stations",
-            options=selected_ids,
-            default=selected_ids[:1] if selected_ids else [],
-            key="fcst_station_ids",
-        )
+        with st.expander("Article preset configuration", expanded=False):
+            st.json(article_profile_dict)
     else:
-        station_ids = selected_ids
+        # --- Controls ---
+        top1, top2 = st.columns([2, 1])
+        with top1:
+            scope = st.radio(
+                "Forecast scope",
+                options=["All selected stations", "Choose stations"],
+                horizontal=True,
+                index=0,
+                key="fcst_scope",
+            )
+        with top2:
+            st.caption(f"Selected in Explorer: **{len(selected_ids)}**")
 
-    if not station_ids:
-        st.warning("Choose at least one station to proceed.")
-        return
+        if scope == "Choose stations":
+            station_ids = st.multiselect(
+                "Stations",
+                options=selected_ids,
+                default=selected_ids[:1] if selected_ids else [],
+                key="fcst_station_ids",
+            )
+        else:
+            station_ids = selected_ids
+
+        if not station_ids:
+            st.warning("Choose at least one station to proceed.")
+            return
 
     # --- Parameter selection (consistent with Plot Time Series) ---
     # Always show the app-wide parameter catalog; per-station availability is handled during execution.
@@ -305,46 +332,67 @@ def render_forecasting(role: Optional[str] = None) -> None:
     }
 
     role_norm = (role or "").lower().strip()
-    if role_norm == "playground":
-        parameter_code = str(PCODE_STAGE)
-        st.info("Playground is restricted to parameter **00065 (Stage)**.")
-    else:
-        # Plot Time Series behavior: show all known parameters, try per station, warn if missing.
-        _all_params_str = [str(p) for p in ALL_PARAMETERS]
-        parameter_code = st.selectbox(
-            "Parameter",
-            options=_all_params_str,
-            format_func=lambda p: param_labels.get(str(p), str(p)),
-            index=_all_params_str.index(str(PCODE_STAGE)) if str(PCODE_STAGE) in _all_params_str else 0,
-            key="fcst_parameter_code",
-        )
-
-    if role_norm == "playground":
-        history_days = 1
-    else:
-        history_days = st.selectbox("History window (days)", options=[1, 2, 3, 5, 7], index=4)
-
     model_options = _model_options_for_role(role)
 
-    c1, c2, c3, c4 = st.columns([2, 1, 1, 1])
-    with c1:
-        model_label = st.selectbox(
-            "Model",
-            options=list(model_options.keys()),
-            index=0,
-            key="fcst_model_label",
-        )
-    with c2:
-        if (role or "").lower().strip() == "playground":
-            horizon = st.number_input("Horizon (hours)", min_value=1, max_value=3, value=1, step=1)
+    if use_article_mode and article_profile is not None:
+        parameter_code = article_profile.parameter_code
+        history_days = int(article_profile.history_days)
+        requested_model_key = article_profile.model_key
+        horizon = int(article_profile.horizon_h)
+        reverse_model_options = {value: key for key, value in model_options.items()}
+        if requested_model_key not in reverse_model_options:
+            st.warning(
+                f"Article preset requested model '{requested_model_key}', but it is not available for the current role. Falling back to the first allowed model."
+            )
+            selected_model_key = next(iter(model_options.values()))
         else:
-            horizon = st.selectbox("Horizon (hours)", options=[24, 48, 72], index=0)
-    with c3:
-        use_pi = st.toggle("Show prediction interval (80%)", value=True)
-    with c4:
-        run = st.button("Run forecast", type="primary")
+            selected_model_key = requested_model_key
+        model_label = reverse_model_options.get(selected_model_key, selected_model_key)
+        use_pi = True
+        st.caption(
+            f"Preset parameter: **{param_labels.get(str(parameter_code), str(parameter_code))}** | "
+            f"history: **{history_days} day(s)** | model: **{model_label}** | horizon: **{horizon} h**"
+        )
+        run = st.button("Run article forecast", type="primary")
+    else:
+        if role_norm == "playground":
+            parameter_code = str(PCODE_STAGE)
+            st.info("Playground is restricted to parameter **00065 (Stage)**.")
+        else:
+            # Plot Time Series behavior: show all known parameters, try per station, warn if missing.
+            _all_params_str = [str(p) for p in ALL_PARAMETERS]
+            parameter_code = st.selectbox(
+                "Parameter",
+                options=_all_params_str,
+                format_func=lambda p: param_labels.get(str(p), str(p)),
+                index=_all_params_str.index(str(PCODE_STAGE)) if str(PCODE_STAGE) in _all_params_str else 0,
+                key="fcst_parameter_code",
+            )
 
-    selected_model_key = model_options[model_label]
+        if role_norm == "playground":
+            history_days = 1
+        else:
+            history_days = st.selectbox("History window (days)", options=[1, 2, 3, 5, 7], index=4)
+
+        c1, c2, c3, c4 = st.columns([2, 1, 1, 1])
+        with c1:
+            model_label = st.selectbox(
+                "Model",
+                options=list(model_options.keys()),
+                index=0,
+                key="fcst_model_label",
+            )
+        with c2:
+            if (role or "").lower().strip() == "playground":
+                horizon = st.number_input("Horizon (hours)", min_value=1, max_value=3, value=1, step=1)
+            else:
+                horizon = st.selectbox("Horizon (hours)", options=[24, 48, 72], index=0)
+        with c3:
+            use_pi = st.toggle("Show prediction interval (80%)", value=True)
+        with c4:
+            run = st.button("Run forecast", type="primary")
+
+        selected_model_key = model_options[model_label]
 
     # --- Model-specific controls ---
     if selected_model_key == "persistence":
@@ -518,7 +566,21 @@ def render_forecasting(role: Optional[str] = None) -> None:
     st.session_state["latest_forecast_df"] = df_fcst.copy()
     st.session_state["latest_station_ids"] = station_ids
     st.session_state["latest_model_key"] = selected_model_key
+    forecast_profile = {
+        "profile_type": "article_demo" if use_article_mode else "standard",
+        "app_version": APP_VERSION,
+        "station_ids": list(station_ids),
+        "parameter_code": str(parameter_code),
+        "history_days": int(history_days),
+        "horizon_h": int(horizon_i),
+        "requested_model_key": selected_model_key,
+        "requested_model_label": model_label,
+        "used_article_demo_profile": article_profile_dict,
+    }
+
     st.session_state["latest_horizon"] = horizon_i
+    st.session_state["latest_forecast_profile"] = forecast_profile
+    st.session_state["latest_llm_report"] = None
 
     # Backward compatibility for callers that still expect single-station keys.
     if station_bundles:
@@ -570,3 +632,17 @@ def render_forecasting(role: Optional[str] = None) -> None:
 
     with st.expander("Forecast run artifact (JSON)", expanded=False):
         st.json(forecast_run_artifact)
+
+    if use_article_mode:
+        article_bundle = build_article_forecast_bundle_bytes(
+            forecast_df=df_fcst,
+            forecast_run_artifact=forecast_run_artifact,
+            profile=forecast_profile,
+        )
+        st.download_button(
+            "Download article forecast bundle (ZIP)",
+            data=article_bundle,
+            file_name="article_forecast_bundle.zip",
+            mime="application/zip",
+            help="Exports the forecast CSV, run JSON, and experiment configuration used for the article demo profile.",
+        )
