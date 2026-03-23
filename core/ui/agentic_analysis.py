@@ -14,6 +14,11 @@ import streamlit as st
 
 from core.config import get_runtime_settings
 from core.context_enrichment import enrich_us_station_context, get_station_context_markdown
+from core.ui.agentic_presentation import (
+    PRESENTATION_OPTIONS,
+    normalize_focus_text,
+    resolve_agentic_presentation,
+)
 from core.llm_analysis.config import AnalysisConfig, PagePolicy, ReportStyle
 from core.llm_analysis.forecast_integration.adapter import forecast_output_to_context
 from core.llm_analysis.llm_agent import LLMConfig, run_llm_analyst
@@ -53,7 +58,7 @@ def render_agentic_analysis(role: str | None = None) -> None:
     st.session_state.setdefault("ollama_base_url", _env_or_default("OLLAMA_BASE_URL", "http://localhost:11434"))
     st.session_state.setdefault("openai_base_url", _env_or_default("OPENAI_BASE_URL", "https://api.openai.com"))
     st.session_state.setdefault("openai_api_key_override", "")
-    st.session_state.setdefault("llm_user_question", "")
+    st.session_state.setdefault("agentic_focus_text", "")
 
     settings = get_runtime_settings()
 
@@ -69,18 +74,22 @@ def render_agentic_analysis(role: str | None = None) -> None:
         if max_pages > 10:
             st.warning("High page budget: execution may be slower.")
 
-        tone = st.selectbox(
-            "Report tone",
-            options=["neutral", "technical", "operational", "executive"],
+        presentation_label = st.selectbox(
+            "Analysis presentation",
+            options=PRESENTATION_OPTIONS,
             index=0,
+            help="Controls how the primary analysis summary is rendered below.",
         )
-
-        user_instructions = st.text_area(
-            "Additional instructions (future LLM input)",
-            value="",
-            height=110,
-            placeholder="Optional. Will be used in future versions. Avoid secrets.",
+        presentation = resolve_agentic_presentation(presentation_label)
+        tone = presentation["report_tone"]
+        focus_text = st.text_area(
+            "Analysis focus (optional)",
+            key="agentic_focus_text",
+            height=90,
+            placeholder="Example: emphasize uncertainty, local environmental drivers, or operational monitoring implications.",
+            help="This single field is reused by the deterministic summary and, if enabled, by the optional LLM Analyst.",
         )
+        st.caption(presentation["description"])
 
         include_station_context = st.toggle(
             "Enrich with official station context",
@@ -107,17 +116,17 @@ def render_agentic_analysis(role: str | None = None) -> None:
             disabled=True,
         )
         st.selectbox(
-            "Report tone",
-            options=["neutral"],
+            "Analysis presentation",
+            options=["Narrative paragraph"],
             index=0,
             disabled=True,
         )
         st.text_area(
-            "Additional instructions (future LLM input)",
+            "Analysis focus (optional)",
             value="",
-            height=110,
+            height=90,
             disabled=True,
-            placeholder="Enabled for User/Admin. In future versions this will feed the LLM (with injection protection).",
+            placeholder="Enabled for User/Admin.",
         )
         st.toggle(
             "Enrich with official station context",
@@ -134,8 +143,9 @@ def render_agentic_analysis(role: str | None = None) -> None:
         )
 
         max_pages = 5
-        tone = "neutral"
-        user_instructions = ""
+        presentation = resolve_agentic_presentation("Narrative paragraph")
+        tone = presentation["report_tone"]
+        focus_text = ""
         use_cache = True
         force_refresh = False
         include_station_context = settings.station_context_enrichment_enabled
@@ -178,7 +188,7 @@ def render_agentic_analysis(role: str | None = None) -> None:
         page_policy=PagePolicy(max_pages=max_pages),
         report_style=ReportStyle(tone=tone),
         collector_opts={
-            "user_instructions_present": bool(user_instructions.strip()),
+            "focus_text_present": bool(normalize_focus_text(focus_text)),
         },
     )
 
@@ -235,16 +245,19 @@ def render_agentic_analysis(role: str | None = None) -> None:
         st.info("Run the analysis to generate the report and audit artifacts.")
         return
 
-    st.markdown("### Generated Report")
-    st.markdown(result.report.content)
+    focus_text = normalize_focus_text(st.session_state.get("agentic_focus_text"))
+    brief_format = presentation["brief_format"] if isinstance(presentation, dict) else "structured"
 
-    st.markdown("### Quantitative Forecast Brief (v0.9.3)")
+    st.markdown("### Primary Analysis Summary")
     st.caption(
         "Deterministic natural-language interpretation grounded only in the recent history and the forecast artifact. "
         "No web search or external LLM call is needed for this section."
     )
     quantitative_brief = build_quantitative_forecast_brief(forecast_ctx)
-    st.markdown(render_quantitative_brief_markdown(quantitative_brief))
+    st.markdown(render_quantitative_brief_markdown(quantitative_brief, format_style=brief_format, focus_text=focus_text))
+
+    with st.expander("Underlying deterministic source report", expanded=False):
+        st.markdown(result.report.content)
 
     station_context = st.session_state.get("agentic_station_context")
     if isinstance(station_context, dict):
@@ -400,13 +413,10 @@ def render_agentic_analysis(role: str | None = None) -> None:
         disabled=(provider != "openai"),
     )
 
-    user_question = st.text_area(
-        "Optional question / focus",
-        key="llm_user_question",
-        height=80,
-        placeholder="Example: Summarize key environmental drivers relevant to the forecast uncertainty.",
-        disabled=(provider == "off"),
-    )
+    if focus_text:
+        st.caption(f"The optional LLM Analyst will reuse the current analysis focus: {focus_text}")
+    else:
+        st.caption("No explicit analysis focus is set. The optional LLM Analyst will summarize the structured artifacts as-is.")
 
     if st.button("Run LLM Analyst", key="run_llm_analyst_btn", disabled=not can_run_llm):
         run_path2 = Path(run_path_s) if run_path_s else None
@@ -428,7 +438,7 @@ def render_agentic_analysis(role: str | None = None) -> None:
                     run_path=run_path2,
                     forecast_ctx=forecast_ctx,
                     llm_cfg=llm_cfg,
-                    user_question=user_question,
+                    user_question=focus_text,
                 )
                 st.success("LLM report generated and appended to run.json")
                 st.markdown(rep.output_markdown)

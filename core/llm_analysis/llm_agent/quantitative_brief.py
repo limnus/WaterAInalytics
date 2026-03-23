@@ -309,13 +309,98 @@ def build_quantitative_forecast_brief(forecast_ctx: ForecastContext) -> Dict[str
     }
 
 
-def render_quantitative_brief_markdown(brief: Dict[str, Any]) -> str:
+def render_quantitative_brief_markdown(
+    brief: Dict[str, Any],
+    *,
+    format_style: str = "structured",
+    focus_text: str | None = None,
+) -> str:
     lines: List[str] = []
 
     summary = (brief.get("executive_summary") or "").strip()
+    focus = (focus_text or "").strip()
+
+    def _items(key: str) -> List[str]:
+        return [x.strip() for x in (brief.get(key) or []) if isinstance(x, str) and x.strip()]
+
+    if format_style == "narrative":
+        lines.append("#### Narrative Summary")
+        if focus:
+            lines.append(f"Requested focus: {focus}.")
+            lines.append("")
+        if summary:
+            lines.append(summary)
+            lines.append("")
+        key_findings = _items("key_findings")
+        if key_findings:
+            lines.append("Observed-series interpretation: " + " ".join(key_findings))
+            lines.append("")
+        forecast_interpretation = _items("forecast_interpretation")
+        if forecast_interpretation:
+            lines.append("Forecast interpretation: " + " ".join(forecast_interpretation))
+            lines.append("")
+        limitations = _items("limitations")
+        if limitations:
+            lines.append("Limitations: " + " ".join(limitations))
+            lines.append("")
+        open_questions = _items("open_questions")
+        if open_questions:
+            lines.append("Open questions: " + " ".join(open_questions))
+        return "\n".join(lines).strip()
+
+    if format_style == "technical":
+        lines.append("#### Technical Summary")
+        if focus:
+            lines.append(f"Focus applied: {focus}")
+            lines.append("")
+        if summary:
+            lines.append(summary)
+            lines.append("")
+
+        hstats = brief.get("history_stats") or {}
+        fstats = brief.get("forecast_stats") or {}
+        diagnostics = [
+            f"History points = {hstats.get('history_points', 'NA')}",
+            f"Recent mean = {_fmt_value(hstats.get('recent_mean'))}",
+            f"Recent std = {_fmt_value(hstats.get('recent_std'))}",
+            f"Trend label = {hstats.get('trend_label', 'NA')}",
+            f"Forecast horizon = {fstats.get('horizon_count', 'NA')}",
+            f"Next prediction = {_fmt_value(fstats.get('first_pred'))}",
+            f"Uncertainty = {fstats.get('uncertainty_label', 'NA')}",
+        ]
+        lines.append("#### Diagnostics")
+        for item in diagnostics:
+            lines.append(f"- {item}")
+        lines.append("")
+
+        for title, key in (
+            ("Key Findings", "key_findings"),
+            ("Forecast Interpretation", "forecast_interpretation"),
+            ("Limitations", "limitations"),
+        ):
+            items = _items(key)
+            if not items:
+                continue
+            lines.append(f"#### {title}")
+            for item in items:
+                lines.append(f"- {item}")
+            lines.append("")
+
+        open_questions = _items("open_questions")
+        if open_questions:
+            lines.append("#### Open Questions")
+            for item in open_questions:
+                lines.append(f"- {item}")
+        return "\n".join(lines).strip()
+
     if summary:
         lines.append("#### Executive Summary")
         lines.append(summary)
+        lines.append("")
+
+    if focus:
+        lines.append("#### Requested Focus")
+        lines.append(focus)
         lines.append("")
 
     for title, key in (
@@ -324,12 +409,12 @@ def render_quantitative_brief_markdown(brief: Dict[str, Any]) -> str:
         ("Limitations", "limitations"),
         ("Open Questions", "open_questions"),
     ):
-        items = [x for x in (brief.get(key) or []) if isinstance(x, str) and x.strip()]
+        items = _items(key)
         if not items:
             continue
         lines.append(f"#### {title}")
         for item in items:
-            lines.append(f"- {item.strip()}")
+            lines.append(f"- {item}")
         lines.append("")
 
     return "\n".join(lines).strip()
