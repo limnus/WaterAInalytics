@@ -89,8 +89,18 @@ def test_forecast_output_rows_and_run_artifact_are_standardized():
         pi_method_label="GaussianResidual(80%)",
         session_seed=123,
         created_at_utc="2026-03-22T03:00:00+00:00",
+        article_mode=True,
+        strict_model_validation=True,
+        artifact_validation=[{"station_id": "USGS-01013500", "all_required_present": True}],
+        article_preset_key="paper-supplement-turbidity",
+        article_preset_name="Paper Supplement — Turbidity (63680)",
     )
     assert artifact["schema_version"] == FORECAST_RUN_SCHEMA_VERSION
     assert artifact["station_count"] == 1
+    assert artifact["article_mode"] is True
+    assert artifact["strict_model_validation"] is True
+    assert artifact["artifact_validation"][0]["all_required_present"] is True
+    assert artifact["article_preset_key"] == "paper-supplement-turbidity"
+    assert artifact["article_preset_name"] == "Paper Supplement — Turbidity (63680)"
     assert artifact["stations"][0]["history"]["last_value"] == 10.0
     assert artifact["stations"][0]["forecast"][0]["used_model_label"] == "Ridge"

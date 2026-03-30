@@ -124,6 +124,11 @@ def build_forecast_run_artifact(
     pi_method_label: str,
     session_seed: Optional[int],
     created_at_utc: Optional[str] = None,
+    article_mode: bool = False,
+    strict_model_validation: bool = False,
+    artifact_validation: Optional[List[Dict[str, Any]]] = None,
+    article_preset_key: Optional[str] = None,
+    article_preset_name: Optional[str] = None,
 ) -> Dict[str, Any]:
     created = created_at_utc or datetime.now(timezone.utc).isoformat()
 
@@ -168,5 +173,10 @@ def build_forecast_run_artifact(
         "pi_method": pi_method_label,
         "session_seed": int(session_seed) if session_seed is not None else None,
         "station_count": int(len(station_bundles)),
+        "article_mode": bool(article_mode),
+        "article_preset_key": article_preset_key if article_mode else None,
+        "article_preset_name": article_preset_name if article_mode else None,
+        "strict_model_validation": bool(strict_model_validation),
+        "artifact_validation": list(artifact_validation or []),
         "stations": stations_payload,
     }
