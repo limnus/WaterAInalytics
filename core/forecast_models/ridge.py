@@ -1,7 +1,7 @@
 # core/forecast_models/ridge.py
 from __future__ import annotations
 
-from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Tuple
 
@@ -306,7 +306,54 @@ def tune_ridge_alpha(
     return best_artifacts
 
 
-def save_ridge_artifacts(artifacts_dir: Path, artifacts: Dict[str, Any]) -> None:
+def build_ridge_training_manifest(
+    *,
+    artifacts: Dict[str, Any],
+    station_id: str | None = None,
+    parameter: str | None = None,
+    model_key: str = "ridge",
+    artifacts_dir: Path | None = None,
+    trained_at_utc: str | None = None,
+    generated_by: str = "core.ui.admin_models",
+) -> Dict[str, Any]:
+    files = ["meta.json", "weights.npz", "training_manifest.json"]
+    manifest: Dict[str, Any] = {
+        "schema_version": "ridge_training_manifest_v1",
+        "trained_at_utc": trained_at_utc or datetime.now(timezone.utc).isoformat(),
+        "station_id": station_id,
+        "parameter": str(parameter) if parameter is not None else None,
+        "model_key": model_key,
+        "generated_by": generated_by,
+        "artifacts_dir": str(artifacts_dir) if artifacts_dir is not None else None,
+        "alpha": float(artifacts.get("alpha", float("nan"))),
+        "best_alpha": float(artifacts.get("best_alpha", artifacts.get("alpha", float("nan")))),
+        "rmse_valid": float(artifacts.get("rmse_valid", float("nan"))),
+        "best_rmse_valid": float(artifacts.get("best_rmse_valid", artifacts.get("rmse_valid", float("nan")))),
+        "n_rows": int(artifacts.get("n_rows", 0)),
+        "n_supervised": int(artifacts.get("n_supervised", 0)),
+        "n_train": int(artifacts.get("n_train", 0)),
+        "n_valid": int(artifacts.get("n_valid", 0)),
+        "lags": list(artifacts.get("lags", [])),
+        "roll_means": list(artifacts.get("roll_means", [])),
+        "all_int": bool(artifacts.get("all_int", False)),
+        "all_nonneg": bool(artifacts.get("all_nonneg", False)),
+        "sigma_residual": float(artifacts.get("sigma_residual", 0.0)),
+        "rmse_by_alpha": dict(artifacts.get("rmse_by_alpha", {})),
+        "files_generated": files,
+    }
+    return manifest
+
+
+def save_ridge_artifacts(
+    artifacts_dir: Path,
+    artifacts: Dict[str, Any],
+    *,
+    station_id: str | None = None,
+    parameter: str | None = None,
+    model_key: str = "ridge",
+    trained_at_utc: str | None = None,
+    generated_by: str = "core.ui.admin_models",
+) -> None:
     artifacts_dir.mkdir(parents=True, exist_ok=True)
 
     import json
@@ -324,5 +371,19 @@ def save_ridge_artifacts(artifacts_dir: Path, artifacts: Dict[str, Any]) -> None
         w=w,
         mu=mu,
         sd=sd,
+    )
+
+    manifest = build_ridge_training_manifest(
+        artifacts=artifacts,
+        station_id=station_id,
+        parameter=parameter,
+        model_key=model_key,
+        artifacts_dir=artifacts_dir,
+        trained_at_utc=trained_at_utc,
+        generated_by=generated_by,
+    )
+    (artifacts_dir / "training_manifest.json").write_text(
+        json.dumps(manifest, indent=2, sort_keys=True),
+        encoding="utf-8",
     )
     

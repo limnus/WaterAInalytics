@@ -294,7 +294,14 @@ def render_admin_models(role: str | None = None) -> None:
                     artifacts = train_ridge_from_history(hist, alpha=float(alpha))
 
                 out_dir = model_dir(station_id=f"USGS-{site}", parameter=str(pcode), model_key="ridge")
-                save_ridge_artifacts(out_dir, artifacts)
+                save_ridge_artifacts(
+                    out_dir,
+                    artifacts,
+                    station_id=f"USGS-{site}",
+                    parameter=str(pcode),
+                    model_key="ridge",
+                    generated_by="core.ui.admin_models",
+                )
                 ridge_trained += 1
 
                 # Chronos optimization
