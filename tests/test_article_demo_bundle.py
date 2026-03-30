@@ -23,7 +23,7 @@ def test_build_article_forecast_bundle_contains_expected_files():
             "y_hat": [1.23],
         }
     )
-    run_artifact = {"schema_version": "forecast_run_v1", "stations": [{"station_id": "USGS-1"}]}
+    run_artifact = {"schema_version": "forecast_run_v1", "article_mode": True, "article_preset_key": "paper-core-flow", "article_preset_name": "Paper Core — Flow (00060)", "stations": [{"station_id": "USGS-1", "parameter": "00060", "used_model_key": "ridge", "history": {"n_rows": 1, "start_utc": "2026-03-22T00:00:00+00:00", "end_utc": "2026-03-22T00:00:00+00:00", "last_value": 1.0}, "forecast": [{"timestamp_utc": "2026-03-23T00:00:00+00:00", "y_hat": 1.23}], "meta": {"alpha": 1.0}}]}
     profile = {"profile_type": "article_demo", "station_ids": ["USGS-1"]}
 
     data = build_article_forecast_bundle_bytes(
@@ -33,7 +33,7 @@ def test_build_article_forecast_bundle_contains_expected_files():
     )
     files = _read_zip(data)
 
-    assert set(files) >= {"manifest.json", "forecast.csv", "forecast_run.json", "experiment_config.json"}
+    assert set(files) >= {"manifest.json", "forecast.csv", "forecast_run.json", "experiment_config.json", "experiment_summary.json", "experiment_summary.csv"}
     manifest = json.loads(files["manifest.json"].decode("utf-8"))
     assert manifest["bundle_type"] == "article_forecast_bundle_v1"
     assert manifest["profile"]["profile_type"] == "article_demo"
@@ -47,7 +47,7 @@ def test_build_article_analysis_bundle_contains_expected_files():
             "y_hat": [1.23],
         }
     )
-    run_artifact = {"schema_version": "forecast_run_v1", "stations": [{"station_id": "USGS-1"}]}
+    run_artifact = {"schema_version": "forecast_run_v1", "article_mode": True, "article_preset_key": "paper-core-flow", "article_preset_name": "Paper Core — Flow (00060)", "stations": [{"station_id": "USGS-1", "parameter": "00060", "used_model_key": "ridge", "history": {"n_rows": 1, "start_utc": "2026-03-22T00:00:00+00:00", "end_utc": "2026-03-22T00:00:00+00:00", "last_value": 1.0}, "forecast": [{"timestamp_utc": "2026-03-23T00:00:00+00:00", "y_hat": 1.23}], "meta": {"alpha": 1.0}}]}
     profile = {"profile_type": "article_demo", "station_ids": ["USGS-1"]}
     llm_report = {"output_markdown": "# LLM output"}
 
@@ -70,6 +70,8 @@ def test_build_article_analysis_bundle_contains_expected_files():
         "forecast.csv",
         "forecast_run.json",
         "experiment_config.json",
+        "experiment_summary.json",
+        "experiment_summary.csv",
         "quantitative_brief.md",
         "deterministic_report.md",
         "official_station_context.json",

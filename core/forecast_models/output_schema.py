@@ -113,6 +113,111 @@ def rows_to_frame(rows: Iterable[Dict[str, Any]]) -> pd.DataFrame:
     return df
 
 
+
+
+def _normalize_manifest_dict(training_manifest: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    if not isinstance(training_manifest, dict):
+        return {}
+    return dict(training_manifest)
+
+
+def summarize_station_forecast(
+    station_payload: Dict[str, Any],
+    *,
+    article_preset_key: Optional[str] = None,
+    article_preset_name: Optional[str] = None,
+    training_manifest: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    hist = dict(station_payload.get("history") or {})
+    forecast_rows = list(station_payload.get("forecast") or [])
+    meta = dict(station_payload.get("meta") or {})
+    manifest = _normalize_manifest_dict(training_manifest)
+
+    first_row = forecast_rows[0] if forecast_rows else {}
+    last_row = forecast_rows[-1] if forecast_rows else {}
+
+    return {
+        "article_preset_key": article_preset_key,
+        "article_preset_name": article_preset_name,
+        "station_id": station_payload.get("station_id"),
+        "parameter": station_payload.get("parameter"),
+        "requested_model_key": station_payload.get("requested_model_key"),
+        "requested_model_label": station_payload.get("requested_model_label"),
+        "used_model_key": station_payload.get("used_model_key"),
+        "used_model_label": station_payload.get("used_model_label"),
+        "history_n_rows": hist.get("n_rows"),
+        "history_start_utc": hist.get("start_utc"),
+        "history_end_utc": hist.get("end_utc"),
+        "history_last_value": hist.get("last_value"),
+        "sigma_residual": station_payload.get("sigma_residual"),
+        "alpha": meta.get("alpha"),
+        "forecast_start_utc": first_row.get("timestamp_utc"),
+        "forecast_end_utc": last_row.get("timestamp_utc"),
+        "forecast_first_y_hat": first_row.get("y_hat"),
+        "forecast_last_y_hat": last_row.get("y_hat"),
+        "trained_at_utc": manifest.get("trained_at_utc"),
+        "n_train": manifest.get("n_train"),
+        "n_valid": manifest.get("n_valid"),
+        "rmse_valid": manifest.get("rmse_valid"),
+        "best_alpha": manifest.get("best_alpha", meta.get("alpha")),
+        "best_rmse_valid": manifest.get("best_rmse_valid", manifest.get("rmse_valid")),
+        "rmse_by_alpha": manifest.get("rmse_by_alpha"),
+        "training_manifest_path": manifest.get("_path"),
+    }
+
+
+def build_experiment_summary_artifact(
+    forecast_run_artifact: Dict[str, Any],
+    *,
+    training_manifests: Optional[Dict[str, Dict[str, Any]]] = None,
+) -> Dict[str, Any]:
+    run = dict(forecast_run_artifact or {})
+    article_preset_key = run.get("article_preset_key")
+    article_preset_name = run.get("article_preset_name")
+
+    station_rows: List[Dict[str, Any]] = []
+    for station_payload in list(run.get("stations") or []):
+        station_id = station_payload.get("station_id")
+        parameter = station_payload.get("parameter")
+        used_model_key = station_payload.get("used_model_key")
+        manifest_key = f"{used_model_key}|{station_id}|{parameter}"
+        manifest = (training_manifests or {}).get(manifest_key)
+        station_rows.append(
+            summarize_station_forecast(
+                station_payload,
+                article_preset_key=article_preset_key,
+                article_preset_name=article_preset_name,
+                training_manifest=manifest,
+            )
+        )
+
+    return {
+        "schema_version": "experiment_summary_v1",
+        "created_at_utc": run.get("created_at_utc"),
+        "article_mode": bool(run.get("article_mode", False)),
+        "article_preset_key": article_preset_key,
+        "article_preset_name": article_preset_name,
+        "parameter": run.get("parameter"),
+        "requested_model_key": run.get("requested_model_key"),
+        "requested_model_label": run.get("requested_model_label"),
+        "requested_horizon_h": run.get("requested_horizon_h"),
+        "interval": run.get("interval"),
+        "pi_method": run.get("pi_method"),
+        "station_count": int(run.get("station_count") or len(station_rows)),
+        "stations": station_rows,
+    }
+
+
+def experiment_summary_to_frame(summary_artifact: Dict[str, Any]) -> pd.DataFrame:
+    rows = list((summary_artifact or {}).get("stations") or [])
+    df = pd.DataFrame(rows)
+    if df.empty:
+        return df
+    sort_cols = [c for c in ["article_preset_key", "station_id"] if c in df.columns]
+    if sort_cols:
+        df = df.sort_values(sort_cols).reset_index(drop=True)
+    return df
+
 def build_forecast_run_artifact(
     *,
     station_bundles: List[StationForecastBundle],
@@ -124,11 +229,6 @@ def build_forecast_run_artifact(
     pi_method_label: str,
     session_seed: Optional[int],
     created_at_utc: Optional[str] = None,
-    article_mode: bool = False,
-    strict_model_validation: bool = False,
-    artifact_validation: Optional[List[Dict[str, Any]]] = None,
-    article_preset_key: Optional[str] = None,
-    article_preset_name: Optional[str] = None,
 ) -> Dict[str, Any]:
     created = created_at_utc or datetime.now(timezone.utc).isoformat()
 
@@ -173,10 +273,5 @@ def build_forecast_run_artifact(
         "pi_method": pi_method_label,
         "session_seed": int(session_seed) if session_seed is not None else None,
         "station_count": int(len(station_bundles)),
-        "article_mode": bool(article_mode),
-        "article_preset_key": article_preset_key if article_mode else None,
-        "article_preset_name": article_preset_name if article_mode else None,
-        "strict_model_validation": bool(strict_model_validation),
-        "artifact_validation": list(artifact_validation or []),
         "stations": stations_payload,
     }

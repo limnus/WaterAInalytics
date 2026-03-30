@@ -21,13 +21,7 @@ from core.forecast_models.output_schema import (
 from core.forecast_models.pi import gaussian_residual_pi
 from core.forecast_models.registry import create_model
 from core.forecast_models.paths import model_dir
-from core.article_demo import (
-    build_article_forecast_bundle_bytes,
-    get_article_demo_profiles,
-)
-from core.article_demo.model_validation import (
-    validate_article_model_artifacts_or_raise,
-)
+from core.article_demo import build_article_forecast_bundle_bytes, build_experiment_summary_outputs, get_article_demo_profile
 from core.version import APP_VERSION
 
 from core.cache.get_station_timeseries import (
@@ -263,13 +257,13 @@ def render_forecasting(role: Optional[str] = None) -> None:
     st.markdown("### Forecasting")
 
     selected_ids = (st.session_state.get("explorer_selected_ids", []) or []).copy()
-    article_profiles = get_article_demo_profiles()
-    article_mode_available = bool(article_profiles)
+    article_profile = get_article_demo_profile()
+    article_mode_available = bool(article_profile and article_profile.station_ids)
 
     if article_mode_available:
         profile_choice = st.radio(
             "Execution profile",
-            options=["Standard", "Article / Reproducible Mode"],
+            options=["Standard", f"Article / Reproducible Mode — {article_profile.name}"],
             horizontal=True,
             index=0,
             key="fcst_execution_profile",
@@ -288,25 +282,13 @@ def render_forecasting(role: Optional[str] = None) -> None:
         st.session_state.session_seed = abs(hash(sid if sid is not None else "waterainalytics")) % (2**32 - 1)
     session_seed = int(st.session_state.session_seed)
 
-    article_profile = None
     article_profile_dict = None
-    if use_article_mode and article_profiles:
-        article_options = {profile.name: profile for profile in article_profiles}
-        selected_article_name = st.selectbox(
-            "Article preset",
-            options=list(article_options.keys()),
-            index=0,
-            key="fcst_article_preset_name",
-            help="Choose the reproducible paper preset to run without editing .env.",
-        )
-        article_profile = article_options[selected_article_name]
+    if use_article_mode and article_profile is not None:
         station_ids = article_profile.station_ids
         article_profile_dict = article_profile.to_dict()
         st.info(
-            f"Article / Reproducible Mode is active. Preset: **{article_profile.name}**. Using stations: {', '.join(article_profile.station_labels.get(s, s) for s in station_ids)}."
+            f"Article / Reproducible Mode is active. Using preset stations: {', '.join(article_profile.station_labels.get(s, s) for s in station_ids)}."
         )
-        if article_profile.description:
-            st.caption(article_profile.description)
         with st.expander("Article preset configuration", expanded=False):
             st.json(article_profile_dict)
     else:
@@ -359,19 +341,18 @@ def render_forecasting(role: Optional[str] = None) -> None:
         horizon = int(article_profile.horizon_h)
         reverse_model_options = {value: key for key, value in model_options.items()}
         if requested_model_key not in reverse_model_options:
-            st.error(
-                f"Article preset requested model '{requested_model_key}', but it is not available for the current role. "
-                "Article mode requires the configured model and does not allow fallback."
+            st.warning(
+                f"Article preset requested model '{requested_model_key}', but it is not available for the current role. Falling back to the first allowed model."
             )
-            return
-        selected_model_key = requested_model_key
+            selected_model_key = next(iter(model_options.values()))
+        else:
+            selected_model_key = requested_model_key
         model_label = reverse_model_options.get(selected_model_key, selected_model_key)
         use_pi = True
         st.caption(
             f"Preset parameter: **{param_labels.get(str(parameter_code), str(parameter_code))}** | "
             f"history: **{history_days} day(s)** | model: **{model_label}** | horizon: **{horizon} h**"
         )
-        st.caption("Article mode uses strict model validation: no fallback to Persistence is allowed.")
         run = st.button("Run article forecast", type="primary")
     else:
         if role_norm == "playground":
@@ -490,38 +471,23 @@ def render_forecasting(role: Optional[str] = None) -> None:
         # Instantiate model
         model = create_model(selected_model_key)
 
-        article_artifact_validation = None
-
-        # Load artifacts; in article mode, missing artifacts are a hard failure.
-        if use_article_mode and selected_model_key != "persistence":
-            try:
-                article_artifact_validation = validate_article_model_artifacts_or_raise(
-                    station_id=station_id,
-                    parameter_code=str(parameter_code),
-                    model_key=selected_model_key,
+        # Load artifacts; if missing for non-persistence, fallback to persistence
+        try:
+            artifacts = model.load_artifacts(art_dir, station_id, parameter=str(parameter_code))
+            used_model_label = model_label
+        except FileNotFoundError:
+            if selected_model_key != "persistence":
+                st.warning(
+                    f"Artifacts not found for **{model_label}** on station **{station_id}**. "
+                    "Train this model in Admin/User training first. Falling back to **Persistence**."
                 )
-                artifacts = model.load_artifacts(art_dir, station_id, parameter=str(parameter_code))
-                used_model_label = model_label
-            except FileNotFoundError as exc:
-                st.error(str(exc))
-                return
-        else:
+            model = create_model("persistence")
+            art_dir_eff = model_dir(station_id, parameter=str(parameter_code), model_key="persistence")
             try:
-                artifacts = model.load_artifacts(art_dir, station_id, parameter=str(parameter_code))
-                used_model_label = model_label
+                artifacts = model.load_artifacts(art_dir_eff, station_id, parameter=str(parameter_code))
             except FileNotFoundError:
-                if selected_model_key != "persistence":
-                    st.warning(
-                        f"Artifacts not found for **{model_label}** on station **{station_id}**. "
-                        "Train this model in Admin/User training first. Falling back to **Persistence**."
-                    )
-                model = create_model("persistence")
-                art_dir_eff = model_dir(station_id, parameter=str(parameter_code), model_key="persistence")
-                try:
-                    artifacts = model.load_artifacts(art_dir_eff, station_id, parameter=str(parameter_code))
-                except FileNotFoundError:
-                    artifacts = {}
-                used_model_label = "Persistence"
+                artifacts = {}
+            used_model_label = "Persistence"
 
         used_model_key = model.model_key
 
@@ -568,7 +534,6 @@ def render_forecasting(role: Optional[str] = None) -> None:
             "history_df": history_df.copy(),
             "used_model_key": used_model_key,
             "used_model_label": used_model_label,
-            "article_artifact_validation": article_artifact_validation,
         }
         rows.extend(
             forecast_output_to_rows(
@@ -594,15 +559,6 @@ def render_forecasting(role: Optional[str] = None) -> None:
         interval_label=interval_label,
         pi_method_label=pi_method_label,
         session_seed=session_seed,
-        article_mode=bool(use_article_mode),
-        strict_model_validation=bool(use_article_mode),
-        artifact_validation=[
-            bundle.get("article_artifact_validation")
-            for bundle in analysis_inputs.values()
-            if bundle.get("article_artifact_validation") is not None
-        ],
-        article_preset_key=article_profile.key if use_article_mode and article_profile is not None else None,
-        article_preset_name=article_profile.name if use_article_mode and article_profile is not None else None,
     )
 
     st.session_state["latest_forecast_run_artifact"] = forecast_run_artifact
@@ -619,8 +575,6 @@ def render_forecasting(role: Optional[str] = None) -> None:
         "horizon_h": int(horizon_i),
         "requested_model_key": selected_model_key,
         "requested_model_label": model_label,
-        "article_preset_key": article_profile.key if use_article_mode and article_profile is not None else None,
-        "article_preset_name": article_profile.name if use_article_mode and article_profile is not None else None,
         "used_article_demo_profile": article_profile_dict,
     }
 
@@ -676,8 +630,27 @@ def render_forecasting(role: Optional[str] = None) -> None:
         mime="application/json",
     )
 
+    experiment_summary, experiment_summary_df = build_experiment_summary_outputs(forecast_run_artifact)
+    experiment_summary_json = json.dumps(experiment_summary, indent=2).encode("utf-8")
+    st.download_button(
+        "Download experiment summary JSON",
+        data=experiment_summary_json,
+        file_name="experiment_summary.json",
+        mime="application/json",
+        help="Compact run summary for manuscript support, including station-level forecast and training metadata when available.",
+    )
+    st.download_button(
+        "Download experiment summary CSV",
+        data=experiment_summary_df.to_csv(index=False).encode("utf-8"),
+        file_name="experiment_summary.csv",
+        mime="text/csv",
+        help="Station-level compact summary derived from the forecast run and training manifests.",
+    )
+
     with st.expander("Forecast run artifact (JSON)", expanded=False):
         st.json(forecast_run_artifact)
+    with st.expander("Experiment summary (JSON)", expanded=False):
+        st.json(experiment_summary)
 
     if use_article_mode:
         article_bundle = build_article_forecast_bundle_bytes(

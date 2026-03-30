@@ -7,7 +7,9 @@ from core.forecast_models.output_schema import (
     FORECAST_RUN_SCHEMA_VERSION,
     FORECAST_TABLE_SCHEMA_VERSION,
     StationForecastBundle,
+    build_experiment_summary_artifact,
     build_forecast_run_artifact,
+    experiment_summary_to_frame,
     forecast_output_to_rows,
     normalize_history_frame,
     rows_to_frame,
@@ -89,18 +91,68 @@ def test_forecast_output_rows_and_run_artifact_are_standardized():
         pi_method_label="GaussianResidual(80%)",
         session_seed=123,
         created_at_utc="2026-03-22T03:00:00+00:00",
-        article_mode=True,
-        strict_model_validation=True,
-        artifact_validation=[{"station_id": "USGS-01013500", "all_required_present": True}],
-        article_preset_key="paper-supplement-turbidity",
-        article_preset_name="Paper Supplement — Turbidity (63680)",
     )
     assert artifact["schema_version"] == FORECAST_RUN_SCHEMA_VERSION
     assert artifact["station_count"] == 1
-    assert artifact["article_mode"] is True
-    assert artifact["strict_model_validation"] is True
-    assert artifact["artifact_validation"][0]["all_required_present"] is True
-    assert artifact["article_preset_key"] == "paper-supplement-turbidity"
-    assert artifact["article_preset_name"] == "Paper Supplement — Turbidity (63680)"
     assert artifact["stations"][0]["history"]["last_value"] == 10.0
     assert artifact["stations"][0]["forecast"][0]["used_model_label"] == "Ridge"
+
+
+def test_experiment_summary_artifact_flattens_station_and_manifest_data():
+    hist = pd.DataFrame(
+        {
+            "Datetime": pd.date_range("2026-03-21T22:00:00Z", periods=3, freq="h", tz="UTC"),
+            "Value": [8.0, 9.0, 10.0],
+        }
+    )
+    out = _make_output()
+    bundle = StationForecastBundle(
+        station_id="USGS-01013500",
+        parameter="00065",
+        requested_model_key="ridge",
+        requested_model_label="Ridge",
+        used_model_key="ridge",
+        used_model_label="Ridge",
+        forecast_output=out,
+        history_df=hist,
+    )
+
+    artifact = build_forecast_run_artifact(
+        station_bundles=[bundle],
+        requested_model_key="ridge",
+        requested_model_label="Ridge",
+        parameter="00065",
+        horizon_h=2,
+        interval_label="80%",
+        pi_method_label="GaussianResidual(80%)",
+        session_seed=123,
+        created_at_utc="2026-03-22T03:00:00+00:00",
+    )
+    artifact["article_mode"] = True
+    artifact["article_preset_key"] = "paper-core-flow"
+    artifact["article_preset_name"] = "Paper Core — Flow (00060)"
+
+    training_manifests = {
+        "ridge|USGS-01013500|00065": {
+            "trained_at_utc": "2026-03-21T00:00:00+00:00",
+            "n_train": 40,
+            "n_valid": 10,
+            "rmse_valid": 0.75,
+            "best_alpha": 1.0,
+            "best_rmse_valid": 0.75,
+            "rmse_by_alpha": {"0.1": 0.9, "1.0": 0.75},
+            "_path": "/tmp/training_manifest.json",
+        }
+    }
+
+    summary = build_experiment_summary_artifact(artifact, training_manifests=training_manifests)
+    assert summary["schema_version"] == "experiment_summary_v1"
+    assert summary["article_mode"] is True
+    assert summary["article_preset_key"] == "paper-core-flow"
+    assert summary["station_count"] == 1
+    assert summary["stations"][0]["best_alpha"] == 1.0
+    assert summary["stations"][0]["training_manifest_path"] == "/tmp/training_manifest.json"
+
+    df = experiment_summary_to_frame(summary)
+    assert list(df["station_id"]) == ["USGS-01013500"]
+    assert df.loc[0, "forecast_first_y_hat"] == 10.5
