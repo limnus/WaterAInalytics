@@ -1,14 +1,15 @@
-# WaterAInalytics architecture — v0.9.3
+# WaterAInalytics architecture — v0.10.0
 
-This document reflects the actual application architecture targeted by the `v0.9.3` article-hardening cycle.
+This document reflects the actual application architecture targeted by the `v0.10.0` article-ready cycle.
 
 ## 1. System goals
 
-WaterAInalytics is organized around four operational goals:
+WaterAInalytics is organized around five operational goals:
 - discover and inspect hydrologic monitoring stations;
 - visualize and process station time series;
 - generate short-horizon forecasts with interchangeable models;
-- produce interpretable forecast analysis with deterministic and optional LLM-assisted layers.
+- produce interpretable forecast analysis with deterministic and optional LLM-assisted layers;
+- export auditable artifacts suitable for manuscript preparation and supplementary material.
 
 ## 2. Top-level modules
 
@@ -43,7 +44,14 @@ Forecasting subsystem.
 - ridge model;
 - Chronos integration;
 - prediction intervals;
-- standardized output schema.
+- standardized output schema;
+- trained-artifact manifests for article-facing Ridge runs.
+
+### `core/article_demo/`
+Article / reproducible demo subsystem.
+- fixed paper presets;
+- artifact validation for article mode;
+- export bundles with run artifacts and experiment summaries.
 
 ### `core/llm_analysis/`
 Forecast-analysis subsystem.
@@ -61,6 +69,9 @@ Official station-context enrichment.
 - weather-office/grid metadata;
 - local cache for remote lookups.
 
+### `core/release/`
+Release manifest and machine-readable smoke checks.
+
 ### `core/ui/`
 Streamlit rendering layer for tabs and presentation helpers.
 
@@ -73,22 +84,30 @@ Streamlit rendering layer for tabs and presentation helpers.
 `station selection → cache fetch / retrieval → processing → indicators → plotting`
 
 ### C. Forecasting flow
-`station selection + model selection → model registry → forecast generation → standardized dataframe/json artifacts → session persistence`
+`station selection + model selection → model registry → forecast generation → standardized dataframe/json artifacts → experiment summary export → session persistence`
 
-### D. Agentic analysis flow
+### D. Article-mode forecasting flow
+`paper preset selection → strict artifact validation → forecast generation with fixed station/parameter/model configuration → forecast_run.json + experiment_summary.* + optional bundle export`
+
+### E. Agentic analysis flow
 `latest forecast artifacts → deterministic adapter → quantitative brief → optional official context enrichment → optional LLM refinement → rendered analysis`
 
 ## 4. Forecasting boundary contract
 
-The forecasting tab is the upstream producer for the Agentic Analysis tab.
+The forecasting tab is the upstream producer for the Agentic Analysis tab and for article-support exports.
 
 ### Required outputs
 - `forecast.csv`
 - `forecast_run.json`
 
+### Recommended article-support outputs
+- `experiment_summary.json`
+- `experiment_summary.csv`
+
 ### Expected content
 At minimum, the run artifact should preserve:
 - schema version;
+- article-mode flag and selected preset when applicable;
 - requested model key;
 - effective model key actually used;
 - station identifier;
@@ -98,7 +117,7 @@ At minimum, the run artifact should preserve:
 - history window used to generate the forecast;
 - run timestamps and per-station metadata needed downstream.
 
-This boundary exists to keep the analysis layer decoupled from model internals.
+This boundary exists to keep the analysis layer decoupled from model internals while still producing exportable evidence for the paper workflow.
 
 ## 5. Analysis stack
 
@@ -107,7 +126,8 @@ The deterministic layer is the primary analytical substrate for the paper-orient
 - remain available without LLM access;
 - rely on directly computed statistics and forecast metadata;
 - avoid speculative language;
-- degrade safely when optional context is unavailable.
+- degrade safely when optional context is unavailable;
+- distinguish observed facts, interpretive inferences, alerts, limitations, and open questions.
 
 ### Optional official station context
 The context-enrichment layer may add:
@@ -131,7 +151,8 @@ The local LLM path is additive. It may improve readability or synthesis, but it 
 - authentication database;
 - IV cache;
 - context-enrichment cache;
-- optional forecast/model artifacts under `data/`.
+- optional forecast/model artifacts under `data/`;
+- trained-model manifests for Ridge paper runs.
 
 ### Session state
 The UI uses Streamlit session state for:
@@ -143,9 +164,10 @@ The UI uses Streamlit session state for:
 
 ## 7. Failure-handling principles
 
-The `v0.9.3` line follows these operational rules:
+The `v0.10.0` line follows these operational rules:
 - local deterministic analysis must remain available if Ollama is offline;
 - official-context enrichment must fail soft;
+- article mode must fail explicitly if trained artifacts required by the selected preset are missing;
 - forecasting artifacts must remain parseable even when some optional metadata is unavailable;
 - Playground output must be intentionally truncated by configuration;
 - secrets must come from `.env`, not hard-coded literals.
@@ -157,11 +179,13 @@ The architecture supports reproducibility through:
 - environment-driven configuration;
 - bounded and testable module interfaces;
 - deterministic baseline analysis;
+- fixed article presets;
+- trained-model manifests;
 - release and freeze documentation.
 
-## 9. Known backlog after v0.9.3
+## 9. Known backlog after v0.10.0
 
 Not yet part of the frozen design:
 - unified single-button orchestration for the Agentic Analysis tab;
-- richer land-cover / urbanization / vegetation / geology enrichment;
-- broader automated evaluation harness tied to article figures/tables.
+- richer land-cover / urbanization / vegetation / geology enrichment from canonical sources;
+- broader automated evaluation harness tied directly to article figures/tables.

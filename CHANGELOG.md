@@ -7,6 +7,29 @@ Versioning follows semantic versioning principles where applicable.
 
 ---
 
+## [0.10.0] - 2026-04-02
+Title: Article-ready feature-complete cycle
+
+### Added
+- Strict article-mode model validation for paper presets, preventing silent fallback when trained artifacts are missing.
+- Reproducible paper presets for the core Flow (`00060`) experiment and the supplementary Turbidity (`63680`) experiment.
+- `training_manifest.json` written alongside trained Ridge artifacts.
+- Compact `experiment_summary.json` and `experiment_summary.csv` exports for manuscript support.
+- Deterministic narrative structure separated into observed facts, interpretive inferences, alerts, limitations, and open questions.
+- Release documentation and manifest updates aligned with the article-ready workflow.
+
+### Changed
+- App version aligned to `v0.10.0`.
+- Article demo defaults updated so the main paper path uses Flow (`00060`).
+- README, reproducibility guide, runbook, freeze checklist, and release validation docs updated to reflect the article-ready baseline.
+- Release manifest now documents article presets, manuscript-support artifacts, and trained-artifact expectations.
+
+### Notes
+- `v0.10.0` is the feature-complete-for-article line.
+- Deterministic analysis remains the baseline method; LLM refinement remains optional and secondary.
+
+---
+
 ## [0.9.3] - 2026-03-23
 Title: Article-hardening cycle (consolidation in progress)
 

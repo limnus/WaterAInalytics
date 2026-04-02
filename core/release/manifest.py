@@ -27,12 +27,15 @@ REQUIRED_RELEASE_FILES = [
     f"docs/REPRODUCIBILITY_{APP_VERSION}.md",
     f"docs/RUNBOOK_{APP_VERSION}.md",
     f"docs/CODE_FREEZE_CHECKLIST_{APP_VERSION}.md",
+    f"docs/RELEASE_VALIDATION_{APP_VERSION}.md",
 ]
 
 KEY_IMPORTS = [
     "core.version",
     "core.config",
     "core.release.manifest",
+    "core.article_demo.presets",
+    "core.article_demo.bundle",
     "core.llm_analysis.forecast_integration.adapter",
     "core.llm_analysis.llm_agent.quantitative_brief",
     "core.context_enrichment.official_us_context",
@@ -92,7 +95,7 @@ def _import_checks() -> dict[str, Any]:
             importlib.import_module(name)
             ok = True
             error = None
-        except Exception as exc:  # pragma: no cover - exercised by integration tests through outcome
+        except Exception as exc:  # pragma: no cover
             ok = False
             error = f"{type(exc).__name__}: {exc}"
             failures.append({"module": name, "error": error})
@@ -113,12 +116,33 @@ def build_release_manifest() -> dict[str, Any]:
         "forecast_models": {
             "supported_model_keys": SUPPORTED_FORECAST_MODEL_KEYS,
             "deterministic_outputs_schema": "forecast_run.json + forecast.csv",
+            "manuscript_support_artifacts": [
+                "experiment_summary.json",
+                "experiment_summary.csv",
+            ],
+            "ridge_required_artifacts": [
+                "meta.json",
+                "weights.npz",
+                "training_manifest.json",
+            ],
+        },
+        "article_demo": {
+            "strict_model_validation": True,
+            "multiple_presets": True,
+            "main_preset_parameter": "00060",
+            "supplementary_quality_parameter": "63680",
         },
         "agentic_analysis": {
             "deterministic_quantitative_brief": True,
             "official_station_context_enrichment": True,
             "optional_llm_refinement": True,
             "playground_output_truncation": True,
+            "narrative_sections": [
+                "observed_facts",
+                "inferences",
+                "alerts",
+                "limitations",
+            ],
         },
         "runtime_settings": _safe_settings_summary(),
         "files": _file_checks(),

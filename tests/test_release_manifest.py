@@ -6,6 +6,9 @@ def test_build_release_manifest_has_expected_sections() -> None:
     manifest = build_release_manifest()
     assert manifest["app_version"] == APP_VERSION
     assert manifest["agentic_analysis"]["deterministic_quantitative_brief"] is True
+    assert manifest["article_demo"]["strict_model_validation"] is True
+    assert manifest["article_demo"]["multiple_presets"] is True
+    assert "experiment_summary.json" in manifest["forecast_models"]["manuscript_support_artifacts"]
     assert "required" in manifest["files"]
     assert manifest["forecast_models"]["supported_model_keys"]
 
