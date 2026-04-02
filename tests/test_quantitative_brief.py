@@ -39,14 +39,15 @@ def test_quantitative_brief_is_grounded_and_renders_markdown():
     brief = build_quantitative_forecast_brief(_make_context())
 
     assert "latest observed value is 11.2" in brief["executive_summary"]
-    assert any("Short-term history is increasing" in item for item in brief["key_findings"])
-    assert any("Prediction interval width is" in item for item in brief["forecast_interpretation"])
+    assert any("Latest observation = 11.2" in item for item in brief["observed_facts"])
+    assert any("Short-term history is increasing" in item for item in brief["inferences"])
+    assert any("forecast uncertainty appears" in item for item in brief["inferences"])
     assert brief["history_stats"]["history_points"] == 8
     assert brief["forecast_stats"]["direction_label"] == "increasing"
 
     md = render_quantitative_brief_markdown(brief)
     assert "#### Executive Summary" in md
-    assert "#### Forecast Interpretation" in md
+    assert "#### Interpretive Inferences" in md
     assert "USGS-01013500" in md
 
 
@@ -74,6 +75,6 @@ def test_quantitative_brief_includes_official_station_context_findings():
     brief = build_quantitative_forecast_brief(fc)
 
     assert "state Maine and HUC 01030003" in brief["executive_summary"]
-    assert any("53.2 m above sea level" in item for item in brief["key_findings"])
+    assert any("53.2 m above sea level" in item for item in brief["observed_facts"])
     assert any("County-level geography" in item for item in brief["limitations"])
     assert any("NLCD-derived land cover" in item for item in brief["open_questions"])

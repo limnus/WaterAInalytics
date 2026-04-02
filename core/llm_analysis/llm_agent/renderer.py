@@ -59,6 +59,7 @@ def render_markdown(report: Dict[str, Any]) -> str:
 
     _section("Key Findings", "key_findings")
     _section("Forecast Interpretation", "forecast_interpretation")
+    _section("Alerts", "alerts")
     _section("Limitations", "limitations")
 
     oq = report.get("open_questions") or []

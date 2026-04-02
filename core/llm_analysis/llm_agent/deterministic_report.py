@@ -102,12 +102,26 @@ def build_deterministic_llm_report(
         )
 
     forecast_interpretation: List[Dict[str, Any]] = []
-    for i, text in enumerate(quantitative.get("forecast_interpretation") or [], start=1):
+    for i, text in enumerate((quantitative.get("inferences") or quantitative.get("forecast_interpretation") or []), start=1):
         if not text:
             continue
         forecast_interpretation.append(
             {
                 "id": f"fi_{i:03d}",
+                "text": text,
+                "claim_ids": anchor_claim_ids,
+                "evidence_ids": anchor_evidence_ids,
+                "confidence": "MED",
+            }
+        )
+
+    alerts: List[Dict[str, Any]] = []
+    for i, text in enumerate(quantitative.get("alerts") or [], start=1):
+        if not text:
+            continue
+        alerts.append(
+            {
+                "id": f"alr_{i:03d}",
                 "text": text,
                 "claim_ids": anchor_claim_ids,
                 "evidence_ids": anchor_evidence_ids,
@@ -159,6 +173,7 @@ def build_deterministic_llm_report(
         "executive_summary": executive_summary,
         "key_findings": key_findings,
         "forecast_interpretation": forecast_interpretation,
+        "alerts": alerts,
         "limitations": limitations,
         "open_questions": open_questions,
         "quantitative_brief": quantitative,

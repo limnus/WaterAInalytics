@@ -239,34 +239,60 @@ def build_quantitative_forecast_brief(forecast_ctx: ForecastContext) -> Dict[str
             f"observed range in the recent window = {_fmt_value(hstats['recent_range'])}."
         ),
     ]
-    if hstats.get("anomaly_label"):
-        key_findings.append(
-            f"The latest observed point looks {hstats['anomaly_label']} relative to the recent window "
-            f"(z-score = {_fmt_value(hstats['z_score'])})."
+
+    observed_facts: List[str] = [
+        (
+            f"Latest observation = {_fmt_value(last_value)}; recent mean over the last {hstats['recent_window_points']} points = "
+            f"{_fmt_value(recent_mean)} and recent standard deviation = {_fmt_value(recent_std)}."
+        ),
+        (
+            f"Short-term history over the last {hstats['trend_window_points']} points changed by {_fmt_value(hstats['trend_delta'])} "
+            f"({_fmt_pct(hstats['trend_pct'])})."
+        ),
+        (
+            f"Across the forecast horizon, predicted values span from {_fmt_value(fstats.get('min_pred'))} to "
+            f"{_fmt_value(fstats.get('max_pred'))}; the next predicted value is {_fmt_value(fstats.get('first_pred'))}."
+        ),
+    ]
+    if fstats.get("has_prediction_interval"):
+        observed_facts.append(
+            f"Mean prediction-interval width = {_fmt_value(fstats.get('avg_pi_width'))} "
+            f"(relative width = {_fmt_pct(fstats.get('relative_pi_width'))})."
+        )
+    else:
+        observed_facts.append(
+            "Prediction-interval diagnostics are not available for this forecast artifact."
         )
 
     for item in context_narrative.get("key_findings") or []:
         if isinstance(item, str) and item.strip():
+            observed_facts.append(item.strip())
             key_findings.append(item.strip())
 
-    forecast_interpretation: List[str] = [
+    inferences: List[str] = [
         (
-            f"The next predicted value is {_fmt_value(fstats.get('first_pred'))}, which differs from the latest observation by "
-            f"{_fmt_value(fstats.get('delta_next'))}."
+            f"Short-term history is {hstats['trend_label']} and recent variability is {hstats['variability_label']} "
+            f"(coefficient of variation = {_fmt_pct(hstats['cv'])})."
         ),
         (
-            f"Across the forecast horizon, predicted values span from {_fmt_value(fstats.get('min_pred'))} to "
-            f"{_fmt_value(fstats.get('max_pred'))}; the end-of-horizon direction is {fstats.get('direction_label')}."
+            f"Relative to the latest observation, the end-of-horizon forecast looks {fstats.get('direction_label')} "
+            f"and forecast uncertainty appears {fstats.get('uncertainty_label')}."
         ),
     ]
-    if fstats.get("has_prediction_interval"):
-        forecast_interpretation.append(
-            f"Prediction interval width is {fstats.get('uncertainty_label')} on average "
-            f"(mean PI width = {_fmt_value(fstats.get('avg_pi_width'))}, relative width = {_fmt_pct(fstats.get('relative_pi_width'))})."
+
+    alerts: List[str] = []
+    if hstats.get("anomaly_label"):
+        alerts.append(
+            f"The latest observed point looks {hstats['anomaly_label']} relative to the recent window "
+            f"(z-score = {_fmt_value(hstats['z_score'])})."
         )
-    else:
-        forecast_interpretation.append(
-            "Prediction-interval diagnostics are not available for this forecast artifact, so uncertainty is only partially characterized."
+    if fstats.get("uncertainty_label") == "wide":
+        alerts.append(
+            "Prediction-interval width is wide relative to the forecast level, so near-term outcomes should be interpreted cautiously."
+        )
+    if not fstats.get("has_prediction_interval"):
+        alerts.append(
+            "No prediction interval is available for this forecast artifact, so uncertainty is only partially characterized."
         )
 
     limitations: List[str] = []
@@ -286,6 +312,13 @@ def build_quantitative_forecast_brief(forecast_ctx: ForecastContext) -> Dict[str
             "This quantitative brief is deterministic and data-grounded, but it does not yet incorporate local watershed, geological, meteorological, or land-use context."
         )
 
+    if hstats.get("history_points", 0) < 48:
+        alerts.append(
+            f"Only {hstats['history_points']} historical point(s) were available to anchor this interpretation."
+        )
+
+    forecast_interpretation: List[str] = list(inferences)
+
     open_questions = [
         "Would adding trustworthy local hydro-meteorological and watershed context materially change the interpretation of the current forecast?"
     ]
@@ -299,6 +332,9 @@ def build_quantitative_forecast_brief(forecast_ctx: ForecastContext) -> Dict[str
         "station_id": station,
         "parameter": parameter,
         "executive_summary": executive_summary,
+        "observed_facts": observed_facts,
+        "inferences": inferences,
+        "alerts": alerts,
         "key_findings": key_findings,
         "forecast_interpretation": forecast_interpretation,
         "limitations": limitations,
@@ -323,6 +359,12 @@ def render_quantitative_brief_markdown(
     def _items(key: str) -> List[str]:
         return [x.strip() for x in (brief.get(key) or []) if isinstance(x, str) and x.strip()]
 
+    observed_facts = _items("observed_facts") or _items("key_findings")
+    inferences = _items("inferences") or _items("forecast_interpretation")
+    alerts = _items("alerts")
+    limitations = _items("limitations")
+    open_questions = _items("open_questions")
+
     if format_style == "narrative":
         lines.append("#### Narrative Summary")
         if focus:
@@ -331,19 +373,18 @@ def render_quantitative_brief_markdown(
         if summary:
             lines.append(summary)
             lines.append("")
-        key_findings = _items("key_findings")
-        if key_findings:
-            lines.append("Observed-series interpretation: " + " ".join(key_findings))
+        if observed_facts:
+            lines.append("Observed facts: " + " ".join(observed_facts))
             lines.append("")
-        forecast_interpretation = _items("forecast_interpretation")
-        if forecast_interpretation:
-            lines.append("Forecast interpretation: " + " ".join(forecast_interpretation))
+        if inferences:
+            lines.append("Interpretive inferences: " + " ".join(inferences))
             lines.append("")
-        limitations = _items("limitations")
+        if alerts:
+            lines.append("Alerts: " + " ".join(alerts))
+            lines.append("")
         if limitations:
             lines.append("Limitations: " + " ".join(limitations))
             lines.append("")
-        open_questions = _items("open_questions")
         if open_questions:
             lines.append("Open questions: " + " ".join(open_questions))
         return "\n".join(lines).strip()
@@ -373,12 +414,12 @@ def render_quantitative_brief_markdown(
             lines.append(f"- {item}")
         lines.append("")
 
-        for title, key in (
-            ("Key Findings", "key_findings"),
-            ("Forecast Interpretation", "forecast_interpretation"),
-            ("Limitations", "limitations"),
+        for title, items in (
+            ("Observed Facts", observed_facts),
+            ("Interpretive Inferences", inferences),
+            ("Alerts", alerts),
+            ("Limitations", limitations),
         ):
-            items = _items(key)
             if not items:
                 continue
             lines.append(f"#### {title}")
@@ -386,7 +427,6 @@ def render_quantitative_brief_markdown(
                 lines.append(f"- {item}")
             lines.append("")
 
-        open_questions = _items("open_questions")
         if open_questions:
             lines.append("#### Open Questions")
             for item in open_questions:
@@ -403,13 +443,13 @@ def render_quantitative_brief_markdown(
         lines.append(focus)
         lines.append("")
 
-    for title, key in (
-        ("Key Findings", "key_findings"),
-        ("Forecast Interpretation", "forecast_interpretation"),
-        ("Limitations", "limitations"),
-        ("Open Questions", "open_questions"),
+    for title, items in (
+        ("Observed Facts", observed_facts),
+        ("Interpretive Inferences", inferences),
+        ("Alerts", alerts),
+        ("Limitations", limitations),
+        ("Open Questions", open_questions),
     ):
-        items = _items(key)
         if not items:
             continue
         lines.append(f"#### {title}")
