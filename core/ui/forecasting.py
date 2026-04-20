@@ -22,6 +22,7 @@ from core.forecast_models.pi import gaussian_residual_pi
 from core.forecast_models.registry import create_model
 from core.forecast_models.paths import model_dir
 from core.article_demo import build_article_forecast_bundle_bytes, build_experiment_summary_outputs, get_article_demo_profile
+from core.article_demo.model_validation import validate_article_model_artifacts_or_raise
 from core.version import APP_VERSION
 
 from core.cache.get_station_timeseries import (
@@ -239,6 +240,51 @@ def _model_options_for_role(role: Optional[str]) -> dict[str, str]:
     if r in ("admin", "user"):
         opts.update(_ADMIN_USER_EXTRAS)
     return opts
+
+
+def _resolve_model_and_artifacts(
+    *,
+    station_id: str,
+    parameter_code: str,
+    selected_model_key: str,
+    model_label: str,
+    use_article_mode: bool,
+) -> tuple[object, dict, str, bool]:
+    """Resolve model artifacts for one station.
+
+    Standard mode may fall back to Persistence when trained artifacts are missing.
+    Article / Reproducible Mode is strict and must fail explicitly.
+    """
+    art_dir = model_dir(station_id, parameter=str(parameter_code), model_key=selected_model_key)
+    model = create_model(selected_model_key)
+
+    if use_article_mode and selected_model_key != "persistence":
+        validate_article_model_artifacts_or_raise(
+            station_id=station_id,
+            parameter_code=str(parameter_code),
+            model_key=selected_model_key,
+        )
+
+    try:
+        artifacts = model.load_artifacts(art_dir, station_id, parameter=str(parameter_code))
+        return model, artifacts, model_label, False
+    except FileNotFoundError as e:
+        if use_article_mode:
+            raise FileNotFoundError(
+                f"Article mode requires trained artifacts for model '{selected_model_key}' on station '{station_id}' "
+                f"parameter '{parameter_code}'. {e}"
+            ) from e
+
+        if selected_model_key != "persistence":
+            model = create_model("persistence")
+            art_dir_eff = model_dir(station_id, parameter=str(parameter_code), model_key="persistence")
+            try:
+                artifacts = model.load_artifacts(art_dir_eff, station_id, parameter=str(parameter_code))
+            except FileNotFoundError:
+                artifacts = {}
+            return model, artifacts, "Persistence", True
+
+        return model, {}, model_label, False
 
 
 def render_forecasting(role: Optional[str] = None) -> None:
@@ -465,29 +511,33 @@ def render_forecasting(role: Optional[str] = None) -> None:
 
         history_by_station[station_id] = history_df
 
-        # Artifacts directory (may not exist yet; model implementations decide behavior)
-        art_dir = model_dir(station_id, parameter=str(parameter_code), model_key=selected_model_key)
-
-        # Instantiate model
-        model = create_model(selected_model_key)
-
-        # Load artifacts; if missing for non-persistence, fallback to persistence
         try:
-            artifacts = model.load_artifacts(art_dir, station_id, parameter=str(parameter_code))
-            used_model_label = model_label
-        except FileNotFoundError:
+            model, artifacts, used_model_label, fell_back_to_persistence = _resolve_model_and_artifacts(
+                station_id=station_id,
+                parameter_code=str(parameter_code),
+                selected_model_key=selected_model_key,
+                model_label=model_label,
+                use_article_mode=use_article_mode,
+            )
+        except FileNotFoundError as e:
+            if use_article_mode:
+                st.error(str(e))
+                return
             if selected_model_key != "persistence":
                 st.warning(
                     f"Artifacts not found for **{model_label}** on station **{station_id}**. "
                     "Train this model in Admin/User training first. Falling back to **Persistence**."
                 )
             model = create_model("persistence")
-            art_dir_eff = model_dir(station_id, parameter=str(parameter_code), model_key="persistence")
-            try:
-                artifacts = model.load_artifacts(art_dir_eff, station_id, parameter=str(parameter_code))
-            except FileNotFoundError:
-                artifacts = {}
+            artifacts = {}
             used_model_label = "Persistence"
+            fell_back_to_persistence = True
+
+        if fell_back_to_persistence and selected_model_key != "persistence":
+            st.warning(
+                f"Artifacts not found for **{model_label}** on station **{station_id}**. "
+                "Train this model in Admin/User training first. Falling back to **Persistence**."
+            )
 
         used_model_key = model.model_key
 
