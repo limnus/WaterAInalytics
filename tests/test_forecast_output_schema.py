@@ -141,7 +141,7 @@ def test_experiment_summary_artifact_flattens_station_and_manifest_data():
             "best_alpha": 1.0,
             "best_rmse_valid": 0.75,
             "rmse_by_alpha": {"0.1": 0.9, "1.0": 0.75},
-            "_path": "/tmp/training_manifest.json",
+            "_path": "G:/Meu Drive/AI Code/WaterAInalytics/data/models/ridge/USGS-01013500/00065/training_manifest.json",
         }
     }
 
@@ -151,7 +151,7 @@ def test_experiment_summary_artifact_flattens_station_and_manifest_data():
     assert summary["article_preset_key"] == "paper-core-flow"
     assert summary["station_count"] == 1
     assert summary["stations"][0]["best_alpha"] == 1.0
-    assert summary["stations"][0]["training_manifest_path"] == "/tmp/training_manifest.json"
+    assert summary["stations"][0]["training_manifest_path"] == "data/models/ridge/USGS-01013500/00065/training_manifest.json"
 
     df = experiment_summary_to_frame(summary)
     assert list(df["station_id"]) == ["USGS-01013500"]

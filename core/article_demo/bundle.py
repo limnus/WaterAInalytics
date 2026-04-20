@@ -8,7 +8,7 @@ from typing import Any, Dict, Optional
 
 import pandas as pd
 
-from core.forecast_models.output_schema import build_experiment_summary_artifact, experiment_summary_to_frame
+from core.forecast_models.output_schema import _sanitize_export_path, build_experiment_summary_artifact, experiment_summary_to_frame
 from core.forecast_models.paths import model_dir
 from core.version import APP_VERSION
 
@@ -23,6 +23,19 @@ def _csv_bytes(df: Optional[pd.DataFrame]) -> bytes:
     return df.to_csv(index=False).encode("utf-8")
 
 
+
+
+def _sanitize_payload_for_export(value: Any, *, key_hint: Optional[str] = None) -> Any:
+    if isinstance(value, dict):
+        out: Dict[str, Any] = {}
+        for key, item in value.items():
+            out[key] = _sanitize_payload_for_export(item, key_hint=str(key))
+        return out
+    if isinstance(value, list):
+        return [_sanitize_payload_for_export(item, key_hint=key_hint) for item in value]
+    if isinstance(value, str) and key_hint in {"path", "log_path"}:
+        return _sanitize_export_path(value)
+    return value
 
 
 def _load_training_manifests(forecast_run_artifact: Dict[str, Any]) -> Dict[str, Dict[str, Any]]:
@@ -41,7 +54,7 @@ def _load_training_manifests(forecast_run_artifact: Dict[str, Any]) -> Dict[str,
         except Exception:
             continue
         manifest = dict(manifest)
-        manifest["_path"] = str(Path(manifest_path).resolve())
+        manifest["_path"] = str(manifest_path)
         manifests[f"{used_model_key}|{station_id}|{parameter}"] = manifest
     return manifests
 
@@ -120,9 +133,9 @@ def build_article_analysis_bundle_bytes(
         zf.writestr("quantitative_brief.md", (quantitative_brief_markdown or "").encode("utf-8"))
         zf.writestr("deterministic_report.md", (deterministic_report_markdown or "").encode("utf-8"))
         if station_context is not None:
-            zf.writestr("official_station_context.json", _json_bytes(station_context))
+            zf.writestr("official_station_context.json", _json_bytes(_sanitize_payload_for_export(station_context)))
         if execution_telemetry is not None:
-            zf.writestr("execution_telemetry.json", _json_bytes(execution_telemetry))
+            zf.writestr("execution_telemetry.json", _json_bytes(_sanitize_payload_for_export(execution_telemetry)))
         if llm_report is not None:
             zf.writestr("llm_report.json", _json_bytes(llm_report))
             markdown = llm_report.get("output_markdown") if isinstance(llm_report, dict) else None

@@ -121,6 +121,20 @@ def _normalize_manifest_dict(training_manifest: Optional[Dict[str, Any]]) -> Dic
     return dict(training_manifest)
 
 
+def _sanitize_export_path(path_value: Any) -> Optional[str]:
+    if path_value is None:
+        return None
+    raw = str(path_value).strip()
+    if not raw:
+        return None
+    parts = [part for part in raw.replace("\\", "/").split("/") if part not in {"", "."}]
+    if not parts:
+        return None
+    if "data" in parts:
+        return "/".join(parts[parts.index("data"):])
+    return parts[-1]
+
+
 def summarize_station_forecast(
     station_payload: Dict[str, Any],
     *,
@@ -162,7 +176,7 @@ def summarize_station_forecast(
         "best_alpha": manifest.get("best_alpha", meta.get("alpha")),
         "best_rmse_valid": manifest.get("best_rmse_valid", manifest.get("rmse_valid")),
         "rmse_by_alpha": manifest.get("rmse_by_alpha"),
-        "training_manifest_path": manifest.get("_path"),
+        "training_manifest_path": _sanitize_export_path(manifest.get("_path")),
     }
 
 
