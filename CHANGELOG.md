@@ -7,6 +7,27 @@ Versioning follows semantic versioning principles where applicable.
 
 ---
 
+## [0.10.1] - 2026-04-14
+Title: Post-v0.10.0 stabilization and reproducibility hardening
+
+### Added
+- Hard failure path for Article / Reproducible Mode when required trained model artifacts are missing.
+- Ridge article-mode validation now requires `training_manifest.json` in addition to `meta.json` and `weights.npz`.
+- Export sanitization for experiment summaries and article bundles so local absolute paths are not leaked in shared artifacts.
+- Friendly duplicate-user creation error instead of raw SQLite `UNIQUE constraint failed` messaging.
+
+### Changed
+- App version aligned to `v0.10.1`.
+- Article-mode behavior now matches the intended reproducibility contract for paper-facing runs: no fallback to Persistence when a trained model preset is selected.
+- Manuscript-support exports now preserve useful artifact references without exposing local machine paths.
+- README, reproducibility guide, runbook, and release validation docs updated for the stabilization line.
+
+### Notes
+- `v0.10.1` is a stabilization release on top of the feature-complete `v0.10.0` baseline.
+- Deferred, non-blocking debts remain: download-triggered rerun UX, broader i18n coverage, and a malformed-input rendering edge case in the optional LLM layer.
+
+---
+
 ## [0.10.0] - 2026-04-02
 Title: Article-ready feature-complete cycle
 
