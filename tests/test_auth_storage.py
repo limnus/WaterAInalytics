@@ -51,3 +51,12 @@ def test_default_admin_cannot_be_deleted_or_deactivated(tmp_path):
 
     with pytest.raises(ValueError):
         set_active(DEFAULT_ADMIN_USERNAME, False, db_path=str(db_path))
+
+
+def test_create_user_duplicate_username_gets_friendly_error(tmp_path):
+    db_path = tmp_path / "auth.db"
+    ensure_default_admin(db_path=str(db_path), initial_password="Admin-123")
+    create_user("user@example.com", "Passw0rd!", db_path=str(db_path))
+
+    with pytest.raises(ValueError, match="already exists"):
+        create_user("user@example.com", "Passw0rd!", db_path=str(db_path))

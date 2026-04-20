@@ -157,13 +157,19 @@ def create_user(username: str, password: str, role: str = "User", db_path: str =
     now = _dt_to_iso(_utc_now())
 
     with _connect(db_path) as conn:
-        conn.execute(
-            """
-            INSERT INTO users (username, password_hash, role, is_active, created_at_utc, updated_at_utc)
-            VALUES (?, ?, ?, ?, ?, ?)
-            """,
-            (username.strip(), pw_hash, role, 1 if is_active else 0, now, now),
-        )
+        try:
+            conn.execute(
+                """
+                INSERT INTO users (username, password_hash, role, is_active, created_at_utc, updated_at_utc)
+                VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (username.strip(), pw_hash, role, 1 if is_active else 0, now, now),
+            )
+        except sqlite3.IntegrityError as e:
+            msg = str(e).lower()
+            if "users.username" in msg or "unique constraint failed" in msg:
+                raise ValueError("A user with this username already exists.") from e
+            raise
         conn.commit()
 
 
