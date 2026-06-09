@@ -35,3 +35,6 @@ eval/out/
 eval/evaluation_cases.json
 
 *.csv
+# Paper reproducibility artifacts are distributed through GitHub Releases
+artifacts/paper_results/
+WaterAInalytics_paper_v1_artifacts.zip
