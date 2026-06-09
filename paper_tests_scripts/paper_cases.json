@@ -1,0 +1,133 @@
+{
+  "run_tag": "paper_v1",
+  "data_end_utc": null,
+  "output_root": "artifacts/paper_results",
+  "cache_root": "iv_cache",
+  "benchmark": {
+    "train_days": 60,
+    "eval_days": 7,
+    "history_days_inference": 7,
+    "horizon_h": 24,
+    "origin_stride_h": 24,
+    "aggregation_freq": "h",
+    "aggregation_how": "mean",
+    "min_history_points": 168,
+    "min_train_points": 72,
+    "min_train_coverage": 0.85,
+    "min_eval_coverage": 0.85,
+    "min_valid_origins_per_case": 4,
+    "require_full_future_horizon": true,
+    "enforce_coverage_thresholds": false
+  },
+  "models": {
+    "persistence": {
+      "enabled": true,
+      "noise": 0.02,
+      "pi_level": 0.8
+    },
+    "ridge": {
+      "enabled": true,
+      "alphas": [0.1, 1.0, 10.0, 100.0],
+      "valid_frac": 0.2,
+      "min_valid": 24,
+      "lags": [1, 2, 3, 6, 12, 24],
+      "roll_means": [3, 6, 12, 24],
+      "pi_level": 0.8
+    },
+    "chronos_family": {
+      "enabled": true,
+      "primary_model_key": "chronos-base",
+      "eval_points": 168,
+      "context_candidates_h": [24, 48, 72, 168, 336],
+      "num_samples": 20,
+      "pi_level": 0.8,
+      "flavors": [
+        {
+          "model_key": "chronos-tiny",
+          "hf_model_id": "amazon/chronos-bolt-tiny",
+          "enabled": true
+        },
+        {
+          "model_key": "chronos-mini",
+          "hf_model_id": "amazon/chronos-bolt-mini",
+          "enabled": true
+        },
+        {
+          "model_key": "chronos-base",
+          "hf_model_id": "amazon/chronos-bolt-base",
+          "enabled": true
+        },
+        {
+          "model_key": "chronos-large",
+          "hf_model_id": "amazon/chronos-t5-large",
+          "enabled": false
+        }
+      ]
+    }
+  },
+  "cases": [
+    {
+      "key": "flow_05586100",
+      "group": "core_flow",
+      "station_id": "USGS-05586100",
+      "parameter_code": "00060",
+      "label": "USGS-05586100 flow",
+      "priority": "required",
+      "availability_policy": "must_validate"
+    },
+    {
+      "key": "flow_07010000",
+      "group": "core_flow",
+      "station_id": "USGS-07010000",
+      "parameter_code": "00060",
+      "label": "USGS-07010000 flow",
+      "priority": "required",
+      "availability_policy": "must_validate"
+    },
+    {
+      "key": "flow_07374525",
+      "group": "core_flow",
+      "station_id": "USGS-07374525",
+      "parameter_code": "00060",
+      "label": "USGS-07374525 flow",
+      "priority": "required",
+      "availability_policy": "must_validate"
+    },
+    {
+      "key": "stage_05586100",
+      "group": "core_stage",
+      "station_id": "USGS-05586100",
+      "parameter_code": "00065",
+      "label": "USGS-05586100 stage",
+      "priority": "preferred",
+      "availability_policy": "include_if_valid"
+    },
+    {
+      "key": "stage_07010000",
+      "group": "core_stage",
+      "station_id": "USGS-07010000",
+      "parameter_code": "00065",
+      "label": "USGS-07010000 stage",
+      "priority": "preferred",
+      "availability_policy": "include_if_valid"
+    },
+    {
+      "key": "stage_07374525",
+      "group": "core_stage",
+      "station_id": "USGS-07374525",
+      "parameter_code": "00065",
+      "label": "USGS-07374525 stage",
+      "priority": "preferred",
+      "availability_policy": "include_if_valid"
+    },
+    {
+      "key": "turbidity_07374525",
+      "group": "supplement_turbidity",
+      "station_id": "USGS-07374525",
+      "parameter_code": "63680",
+      "label": "USGS-07374525 turbidity",
+      "priority": "required",
+      "availability_policy": "must_validate"
+    }
+  ]
+}
